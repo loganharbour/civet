@@ -34,7 +34,8 @@ class Modules(object):
             raise Exception("No module environment detected")
 
     def is_exe(self, path):
-        return os.path.isfile(path) and os.access(path, os.X_OK)
+        return os.access(path, os.X_OK)
+        # return os.path.isfile(path) and os.access(path, os.X_OK)
 
     def command(self, command, args=[]):
         """
