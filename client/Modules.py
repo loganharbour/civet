@@ -34,7 +34,8 @@ class Modules(object):
             raise Exception("No module environment detected")
 
     def is_exe(self, path):
-        return os.path.isfile(path) and os.access(path, os.X_OK)
+        return os.access(path, os.X_OK)
+        # return os.path.isfile(path) and os.access(path, os.X_OK)
 
     def command(self, command, args=[]):
         """
@@ -50,12 +51,18 @@ class Modules(object):
             stdout: Output on stdout
             stderr: Output on stderr
         """
-        module_cmd = "%s/bin/modulecmd" % os.environ["MODULESHOME"]
-        if not self.is_exe(module_cmd):
-            # On the cluster we use the lmod command
-            module_cmd = "%s/libexec/lmod" % os.environ["MODULESHOME"]
-            if not self.is_exe(module_cmd):
-                raise Exception("Command to load modules not found")
+        module_cmd = None
+        # On the cluster we use the lmod command and modulecmd can be installed
+        #  in /usr/bin
+        for module_try in ["%s/bin/modulecmd" % os.environ["MODULESHOME"],
+                           "%s/libexec/lmod" % os.environ["MODULESHOME"],
+                           "%s" % os.environ["MODULES_CMD"],
+                           "/usr/bin/modulecmd"]:
+            if self.is_exe(module_try):
+                module_cmd = module_try
+                break
+        if module_cmd is None:
+            raise Exception("Command to load modules not found")
 
         proc = subprocess.Popen([module_cmd, 'python', command] + args,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
