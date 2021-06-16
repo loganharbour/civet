@@ -32,6 +32,34 @@ class INLClient(BaseClient.BaseClient):
         self.check_settings()
         self.client_info["servers"] = [ s[0] for s in settings.SERVERS ]
 
+    def remove_build_root_if_exists(self):
+        build_root = os.environ['BUILD_ROOT']
+
+        logger.info('Trying to remove build root {}'.format(build_root))
+
+        if os.path.isdir(build_root):
+            try:
+                logger.info('Build root exists; removing')
+                os.rmdir(build_root)
+            except:
+                raise Exception('Failed to remove build root {}'.format(build_root))
+        else:
+            logger.info('Build root does not exist')
+
+    def create_build_root(self):
+        build_root = os.environ['BUILD_ROOT']
+
+        logger.info('Creating build root {}'.format(build_root))
+
+        if os.path.isdir(build_root):
+            raise Exception('Build root {} already exists'.format())
+        else:
+            try:
+                os.mkdir(build_root)
+                logger.info('Created build root')
+            except:
+                raise Exception('Failed to create build root {}'.format(build_root))
+
     def check_server(self, server):
         """
         Checks a single server for a job, and if found, runs it.
@@ -46,10 +74,18 @@ class INLClient(BaseClient.BaseClient):
         getter = JobGetter(self.client_info)
         claimed = getter.find_job()
         if claimed:
+            if settings.MANAGE_BUILD_ROOT:
+                self.remove_build_root_if_exists()
+                self.create_build_root()
+
             load_modules = settings.CONFIG_MODULES[claimed['config']]
             os.environ["CIVET_LOADED_MODULES"] = ' '.join(load_modules)
             self.modules.clear_and_load(load_modules)
             self.run_claimed_job(server[0], [ s[0] for s in settings.SERVERS ], claimed)
+
+            if settings.MANAGE_BUILD_ROOT:
+                settings.remove_build_root_if_exists()
+
             return True
         return False
 
@@ -80,6 +116,12 @@ class INLClient(BaseClient.BaseClient):
         except:
             raise Exception(env_msg)
 
+        manage_build_root_msg = "settings.MANAGE_BUILD_ROOT needs to a boolean!"
+        try:
+            if not isinstance(settings.MANAGE_BUILD_ROOT, bool):
+                raise Exception(manage_build_root_msg)
+        except:
+            raise Exception(manage_build_root_msg)
 
     def run(self, single=False):
         """
@@ -93,13 +135,18 @@ class INLClient(BaseClient.BaseClient):
         for k, v in settings.ENVIRONMENT.items():
             os.environ[str(k)] = str(v)
 
+        build_root = os.environ['BUILD_ROOT']
+
         logger.info('Starting {} with MOOSE_JOBS={}'.format(self.client_info["client_name"], os.environ['MOOSE_JOBS']))
-        logger.info('Build root: {}'.format(os.environ['BUILD_ROOT']))
+        logger.info('Build root: {}'.format(build_root)
         self.client_info["build_configs"] = list(settings.CONFIG_MODULES.keys())
 
         # Do a clear_and_load here in case there is a problem with the module system.
         # We don't want to run if we can't do modules.
         self.modules.clear_and_load([])
+
+        if settings.MANAGE_BUILD_ROOT:
+            self.remove_build_root_if_exists()
 
         while True:
             ran_job = False

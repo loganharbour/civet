@@ -58,3 +58,5 @@ ENVIRONMENT = {
     }
 
 NUM_CLIENTS = 1
+
+MANAGE_BUILD_ROOT = True
