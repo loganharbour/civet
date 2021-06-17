@@ -14,7 +14,9 @@ class scheduleConfig(AppConfig):
     def schedulePinger():
         # Used to make the program sleeps until every *nth* minute, not every n minutes
         # (12:00, 12:05, 12:10, rather than 12:01, 12:06, 12:11)
-        interval = croniter("*/5 * * * *", datetime.now())
+        run_every = 5 # in min
+        dt = run_every * 60 # in sec (for sleep)
+        interval = croniter("*/{} * * * *".format(run_every), datetime.now())
 
         # Has to be done here, because these parts of the django app aren't initialized until ready() runs
         from ci import models, ManualEvent
@@ -50,8 +52,7 @@ class scheduleConfig(AppConfig):
                         mev.save(update_branch_status=True) #magically add the job through a blackbox
                         logger.info("SCHEDULER:         Job: " + r.name + " scheduled next for {}".format(c.get_next(datetime)))
 
-            # Sleep for n minutes
-            dt = interval
+            # Sleep for dt minutes
             time.sleep(dt)
 
     def ready(self):
