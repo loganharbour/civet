@@ -33,6 +33,7 @@ class Tests(DBTester.DBTester):
         """
         testing ci:main
         """
+
         response = self.client.get(reverse('ci:main'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Sign in')
@@ -422,6 +423,35 @@ class Tests(DBTester.DBTester):
         job1.save()
         response = self.client.get(reverse('ci:recipe_events', args=[rc.pk]))
         self.assertEqual(response.status_code, 200)
+
+    @patch.object(Permissions, 'is_allowed_to_see_clients')
+    def test_cronjobs(self, mock_allowed):
+        mock_allowed.return_value = True
+        utils.create_recipe(scheduler='* * * * *', branch=self.branch)
+        response = self.client.get(reverse('ci:cronjobs'))
+        self.assertEqual(response.status_code, 200)
+
+        mock_allowed.return_value = False
+        response = self.client.get(reverse('ci:cronjobs'))
+        self.assertEqual(response.status_code, 200)
+
+    @patch.object(Permissions, 'is_allowed_to_see_clients')
+    def test_recipe_crons(self, mock_allowed):
+        mock_allowed.return_value = True
+        r = utils.create_recipe()
+        response = self.client.get(reverse('ci:recipe_crons', args=[r.pk]))
+        self.assertEqual(response.status_code, 200)
+
+    @patch.object(Permissions, 'is_allowed_to_see_clients')
+    def test_manual_cron(self, mock_allowed):
+        mock_allowed.return_value = True
+        r = utils.create_recipe(branch=self.branch)
+        response = self.client.get(reverse('ci:manual_cron', args=[r.pk]))
+        self.assertEqual(response.status_code, 302)
+
+        mock_allowed.return_value = False
+        response = self.client.get(reverse('ci:manual_cron', args=[r.pk]))
+        self.assertEqual(response.status_code, 403)
 
     @patch.object(Permissions, 'is_collaborator')
     def test_invalidate_event(self, mock_collab):
