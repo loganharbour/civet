@@ -16,6 +16,7 @@
 from __future__ import unicode_literals, absolute_import
 from django.db import models
 from django.conf import settings
+from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils.encoding import python_2_unicode_compatible
 from ci.gitlab import api as gitlab_api
@@ -229,6 +230,15 @@ class Repository(models.Model):
 
     def auto_merge_enabled(self):
         return self.get_repo_setting("auto_merge_enabled", False)
+
+    def is_private(self):
+        return self.get_repo_setting("private", False)
+
+    def auth_user(self):
+        username = self.get_repo_setting("auth_user", None)
+        if not username:
+            return None
+        return get_object_or_404(GitUser, name=username, server=self.server())
 
     class Meta:
         unique_together = ['user', 'name']

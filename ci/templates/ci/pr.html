@@ -16,8 +16,14 @@
 {% endcomment %}
 {% load staticfiles %}
 {% load humanize %}
-{% block title %}Civet: {{pr.title}}{% endblock %}
+{% block title %}Civet: {% if pr %}{{pr.title}}{% else %}Private pull request{% endif %}{% endblock %}
 {% block content %}
+{% if not pr %}
+<div class="center">
+  <h3>Private Pull Request</h3>
+  You are not allowed to view this pull request. Please sign in and try again.
+</div>
+{% else %}
 <ol class="breadcrumb">
   <li>{{ pr.repository.user }}</li>
   <li><a href="{% url "ci:view_repo" pr.repository.pk %}">{{ pr.repository.name }}</a></li>
@@ -59,7 +65,7 @@
 {% include "ci/event_table.html" %}
 
 <div class="center"><h3>Additional Recipes to run</h3></div>
-{% if not allowed %}
+{% if not can_add_recipes %}
   You need to be signed in and be a collaborator to add additional recipes.
 {% elif alt_choices %}
   These recipes will be attached to this PR and will automatically be active when the PR branch is updated.
@@ -101,9 +107,11 @@
 {% else %}
   There are no additional recipes available
 {% endif %}
+{% endif %}
 {% endblock %}
 
 {% block end_scripts %}
+{% if pr %}
 {{ block.super }}
 <script type="text/javascript" src="{% static "ci/js/update.js" %}"></script>
 <script>
@@ -130,4 +138,5 @@ $(document).ready(function() {
   }
 });
 </script>
+{% endif %}
 {% endblock end_scripts %}

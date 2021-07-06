@@ -14,18 +14,22 @@
 # limitations under the License.
 
 from __future__ import unicode_literals, absolute_import
-from ci import TimeUtils, models
+from ci import TimeUtils, models, Permissions
 from django.urls import reverse
 from django.utils.html import format_html, mark_safe
 from django.db.models import Prefetch
 import copy
 from django.utils.encoding import force_text
 
-def get_default_events_query(event_q=None):
+def filter_visible_events(event_q, session):
+    return event_q.filter(base__branch__repository__id__in=Permissions.visible_repos(session))
+
+def get_default_events_query(event_q=None, session=None):
     """
     Default events query that preloads all that will be needed in events_info()
     Input:
       event_q: An existing models.Event query
+      session: django.http.HttpRequest.session; provide to limit the query to visible repos
     Return:
       a query on models.Event
     """
@@ -34,30 +38,38 @@ def get_default_events_query(event_q=None):
 
     jobs_q = models.Job.objects.select_related('config', 'recipe'
             ).prefetch_related('recipe__build_configs','recipe__depends_on',)
-    return event_q.order_by('-created').select_related(
+
+    event_q = event_q.order_by('-created').select_related(
         'base__branch__repository__user__server',
         'head__branch__repository__user__server',
         'pull_request',
         ).prefetch_related(Prefetch('jobs', queryset=jobs_q))
 
-def all_events_info(limit=30, last_modified=None):
+    if session:
+        event_q = filter_visible_events(event_q, session)
+
+    return event_q
+
+def all_events_info(limit=30, last_modified=None, session=None):
     """
     Get the default events info list.
     Input:
       limit: int: Maximum number of results to return
       last_modified: DateTime: events with last_modified before this time are ignored.
+      session: django.http.HttpRequest.session; provide to limit the query to visible repos
     Return:
       list of event info dicts as returned by multiline_events_info()
     """
-    event_q = get_default_events_query()[:limit]
+    event_q = get_default_events_query(session=session)[:limit]
     return multiline_events_info(event_q, last_modified)
 
-def get_single_event_for_open_prs(open_prs, last_modified=None):
+def get_single_event_for_open_prs(open_prs, last_modified=None, session=None):
     """
     Get the latest event for a set of open prs
     Input:
         list[int]: A list of models.PullRequest.pk
         last_modified[Datetime]: Limit results to those modified after this date
+        session: django.http.HttpRequest.session; provide to limit the query to visible repos
     Return:
         list[models.Event]: The latest event for each pull request
     """
@@ -83,8 +95,8 @@ def events_with_head(event_q=None):
         event_q = models.Event.objects
     return get_default_events_query(event_q).select_related('head__branch__repository__user')
 
-def events_filter_by_repo(pks, limit=30, last_modified=None):
-    event_q = get_default_events_query()
+def events_filter_by_repo(pks, limit=30, last_modified=None, session=None):
+    event_q = get_default_events_query(session=session)
     event_q = event_q.filter(base__branch__repository__pk__in=pks)[:limit]
     return multiline_events_info(event_q, last_modified)
 

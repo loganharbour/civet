@@ -16,8 +16,14 @@
 {% endcomment %}
 {% load staticfiles %}
 {% load humanize %}
-{% block title %}Civet: {{event}}{% endblock %}
+{% block title %}Civet: {% if event %}{{event}}{% else %}Private event{% endif %}{% endblock %}
 {% block content %}
+{% if not event %}
+<div class="center">
+  <h3>Private Event</h3>
+  You are not allowed to view this event. Please sign in and try again.
+</div>
+{% else %}
 <ol class="breadcrumb">
   <li>{{ event.base.branch.repository.user }}</li>
   <li><a href="{% url "ci:view_repo" event.base.branch.repository.pk %}">{{ event.base.branch.repository.name }}</a></li>
@@ -134,9 +140,11 @@
 
 <div class="center"><h3>Jobs</h3></div>
 {% include "ci/event_table.html" with events=events events_url=1 %}
+{% endif %}
 {% endblock %}
 
 {% block end_scripts %}
+{% if event %}
 {{ block.super }}
 <script type="text/javascript" src="{% static "ci/js/update.js" %}"></script>
 <script type="text/javascript">
@@ -163,4 +171,5 @@ $(document).ready(function() {
   }
 });
 </script>
+{% endif %}
 {% endblock end_scripts %}

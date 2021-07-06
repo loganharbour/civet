@@ -75,11 +75,11 @@ def get_user_repos_info(request, limit=30, last_modified=None):
     else:
         default = True
     if pks:
-        repos = RepositoryStatus.filter_repos_status(pks, last_modified=last_modified)
-        evs_info = EventsStatus.events_filter_by_repo(pks, limit=limit, last_modified=last_modified)
+        repos = RepositoryStatus.filter_repos_status(pks, last_modified=last_modified, session=request.session)
+        evs_info = EventsStatus.events_filter_by_repo(pks, limit=limit, last_modified=last_modified, session=request.session)
     else:
-        repos = RepositoryStatus.main_repos_status(last_modified=last_modified)
-        evs_info = EventsStatus.all_events_info(limit=limit, last_modified=last_modified)
+        repos = RepositoryStatus.main_repos_status(last_modified=last_modified, session=request.session)
+        evs_info = EventsStatus.all_events_info(limit=limit, last_modified=last_modified, session=request.session)
     return repos, evs_info, default
 
 def sorted_clients(client_q):
@@ -128,7 +128,8 @@ def user_repo_settings(request):
                 current_repos.append(repo.pk)
         q = models.Repository.objects.filter(active=True, user__server=gitserver).order_by('user__name', 'name').all()
         for repo in q:
-            all_repos.append((repo.pk, str(repo)))
+            if Permissions.can_see_repo(request.session, repo):
+                all_repos.append((repo.pk, str(repo)))
 
     if not users:
         messages.error(request, "You need to be signed in to set preferences")
@@ -148,8 +149,9 @@ def user_repo_settings(request):
 
             for pk in form.cleaned_data["repositories"]:
                 repo = models.Repository.objects.get(pk=pk)
-                user = users[repo.server().pk]
-                user.preferred_repos.add(repo)
+                if Permissions.can_see_repo(repo):
+                    user = users[repo.server().pk]
+                    user.preferred_repos.add(repo)
 
     return render(request, 'ci/repo_settings.html', {"form": form})
 
@@ -163,12 +165,16 @@ def view_pr(request, pr_id):
       django.http.HttpResponse based object
     """
     pr = get_object_or_404(models.PullRequest.objects.select_related('repository__user'), pk=pr_id)
+
+    if not Permissions.can_see_repo(request.session, pr.repository):
+        return render(request, 'ci/pr.html', {'pr' : None})
+
     ev = pr.events.select_related('build_user', 'base__branch__repository__user__server').latest()
-    allowed = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
+    can_add_recipes = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
     current_alt = []
     alt_choices = []
     default_choices = []
-    if allowed:
+    if can_add_recipes:
         alt_recipes = (models.Recipe.objects
                 .filter(repository=pr.repository,
                     build_user=ev.build_user,
@@ -249,10 +255,10 @@ def view_pr(request, pr_id):
     evs_info = EventsStatus.multiline_events_info(events, events_url=True)
     context = { "pr": pr,
         "events": evs_info,
-        "allowed": allowed,
+        "can_add_recipes": can_add_recipes,
         "update_interval": settings.EVENT_PAGE_UPDATE_INTERVAL,
         "alt_choices": alt_choices,
-        "default_choices": default_choices,
+        "default_choices": default_choices
         }
     return render(request, 'ci/pr.html', context)
 
@@ -261,6 +267,10 @@ def view_event(request, event_id):
     Show the details of an Event
     """
     ev = get_object_or_404(EventsStatus.events_with_head(), pk=event_id)
+
+    if not Permissions.can_see_repo(request.session, ev.base.repo()):
+        return render(request, 'ci/event.html', {'event' : None})
+
     evs_info = EventsStatus.multiline_events_info([ev])
     allowed = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
     has_unactivated = ev.jobs.filter(active=False).count() != 0
@@ -277,6 +287,10 @@ def get_job_results(request, job_id):
     Just download all the output of the job into a tarball.
     """
     job = get_object_or_404(models.Job.objects.select_related('recipe',).prefetch_related('step_results'), pk=job_id)
+
+    if not Permissions.can_see_repo(request.session, job.recipe.repository):
+        return HttpResponseForbidden('Not allowed to see results')
+
     perms = Permissions.job_permissions(request.session, job)
     if not perms['can_see_results']:
         return HttpResponseForbidden('Not allowed to see results')
@@ -313,6 +327,10 @@ def view_job(request, job_id):
                 'step_results',
                 'changelog'))
     job = get_object_or_404(q, pk=job_id)
+
+    if not Permissions.can_see_repo(request.session, job.recipe.repository):
+        return render(request, 'ci/job.html', {'job' : None})
+
     perms = Permissions.job_permissions(request.session, job)
     clients = None
     if perms['can_see_client']:
@@ -353,6 +371,9 @@ def do_repo_page(request, repo):
         request[django.http.HttpRequest]
         repo[models.Repository]
     """
+    if not Permissions.can_see_repo(request.session, repo):
+        return render(request, 'ci/repo.html', {'repo' : None})
+
     limit = 30
     repos_status = RepositoryStatus.filter_repos_status([repo.pk])
     events_info = EventsStatus.events_filter_by_repo([repo.pk], limit=limit)
@@ -365,6 +386,7 @@ def do_repo_page(request, repo):
         'last_request': TimeUtils.get_local_timestamp(),
         'update_interval': settings.HOME_PAGE_UPDATE_INTERVAL
         }
+
     return render(request, 'ci/repo.html', params)
 
 def view_owner_repo(request, owner, repo):
@@ -418,6 +440,9 @@ def do_branch_page(request, branch):
     if request.method != "GET":
         return HttpResponseNotAllowed(['GET'])
 
+    if not Permissions.can_see_repo(request.session, branch.repository):
+        return render(request, 'ci/branch.html', {'branch' : None})
+
     causes = []
     if request.GET.get("do_filter", "0") == "0":
         causes = [models.Event.PUSH, models.Event.MANUAL, models.Event.RELEASE]
@@ -430,7 +455,7 @@ def do_branch_page(request, branch):
     event_list = EventsStatus.get_default_events_query().filter(base__branch=branch, cause__in=causes)
     events = get_paginated(request, event_list)
     evs_info = EventsStatus.multiline_events_info(events)
-    return render(request, 'ci/branch.html', {"form": form, 'branch': branch, 'events': evs_info, 'pages': events})
+    return render(request, 'ci/branch.html', {"form": form, 'branch': branch, 'events': evs_info, 'pages': events, 'allowed': True})
 
 def view_repo_branch(request, owner, repo, branch):
     """
@@ -466,7 +491,7 @@ def view_user(request, username):
     if users.count() == 0:
         raise Http404('Bad username')
 
-    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username)
+    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username, session=request.session)
     pr_ids = []
     for r in repos:
         for pr in r["prs"]:
@@ -478,6 +503,7 @@ def view_user(request, username):
 
 def pr_list(request):
     pr_list = (models.PullRequest.objects
+                .filter(repository__id__in=Permissions.visible_repos(request.session))
                 .order_by('-created')
                 .select_related('repository__user__server')
                 .order_by('repository__user__name', 'repository__name', 'number'))
@@ -486,6 +512,7 @@ def pr_list(request):
 
 def branch_list(request):
     branch_list = (models.Branch.objects
+                    .filter(repository__id__in=Permissions.visible_repos(request.session))
                     .exclude(status=models.JobStatus.NOT_STARTED)
                     .select_related('repository__user__server')
                     .order_by('repository__user__name', 'repository__name', 'name'))
@@ -526,7 +553,7 @@ def cronjobs(request):
     local_tz = pytz.timezone('US/Mountain')
     for r in recipe_list:
         event_list = (EventsStatus
-                        .get_default_events_query()
+                        .get_default_events_query(session=request.session)
                         .filter(jobs__recipe__filename=r.filename, jobs__recipe__cause=r.cause))
         events = get_paginated(request, event_list)
         evs_info = EventsStatus.multiline_events_info(events)
@@ -573,7 +600,7 @@ def clients_info():
     return clients
 
 def event_list(request):
-    event_list = EventsStatus.get_default_events_query()
+    event_list = EventsStatus.get_default_events_query(session=request.session)
     events = get_paginated(request, event_list)
     evs_info = EventsStatus.multiline_events_info(events)
     return render(request, 'ci/events.html', {'events': evs_info, 'pages': events})
@@ -581,7 +608,7 @@ def event_list(request):
 def sha_events(request, owner, repo, sha):
     repo = get_object_or_404(models.Repository.objects, name=repo, user__name=owner)
     event_q = models.Event.objects.filter(head__branch__repository=repo, head__sha__startswith=sha)
-    event_list = EventsStatus.get_default_events_query(event_q)
+    event_list = EventsStatus.get_default_events_query(event_q, session=request.session)
     events = get_paginated(request, event_list)
     evs_info = EventsStatus.multiline_events_info(events)
     return render(request, 'ci/events.html',
@@ -590,7 +617,7 @@ def sha_events(request, owner, repo, sha):
 def recipe_events(request, recipe_id):
     recipe = get_object_or_404(models.Recipe, pk=recipe_id)
     event_list = (EventsStatus
-                    .get_default_events_query()
+                    .get_default_events_query(session=request.session)
                     .filter(jobs__recipe__filename=recipe.filename, jobs__recipe__cause=recipe.cause))
     total = 0
     count = 0
@@ -614,7 +641,7 @@ def recipe_events(request, recipe_id):
 def recipe_crons(request, recipe_id):
     recipe = get_object_or_404(models.Recipe, pk=recipe_id)
     event_list = (EventsStatus
-                    .get_default_events_query()
+                    .get_default_events_query(session=request.session)
                     .filter(jobs__recipe__filename=recipe.filename, jobs__recipe__cause=recipe.cause, jobs__recipe__scheduler__isnull=False).exclude(jobs__recipe__scheduler=''))
     total = 0
     count = 0
@@ -1020,7 +1047,7 @@ def scheduled_events(request):
     """
     List schedule events
     """
-    event_list = EventsStatus.get_default_events_query().filter(cause=models.Event.MANUAL)
+    event_list = EventsStatus.get_default_events_query(session=request.session).filter(cause=models.Event.MANUAL)
     events = get_paginated(request, event_list)
     evs_info = EventsStatus.multiline_events_info(events)
     return render(request, 'ci/scheduled.html', {'events': evs_info, 'pages': events})
@@ -1039,7 +1066,8 @@ def job_info_search(request):
     if request.method == "GET":
         form = forms.JobInfoForm(request.GET)
         if form.is_valid():
-            jobs = models.Job.objects.order_by("-created").select_related("event",
+            jobs = models.Job.objects.filter(event__base__branch__repository__id__in=Permissions.visible_repos(request.session))
+            jobs = jobs.order_by("-created").select_related("event",
                 "recipe",
                 'config',
                 'event__pull_request',
@@ -1062,6 +1090,8 @@ def get_branch_status(branch):
     """
     if branch.status == models.JobStatus.NOT_STARTED:
         raise Http404('Branch not active')
+    if branch.repository.is_private():
+        raise Http404('Repo is private')
 
     m = { models.JobStatus.SUCCESS: "CIVET-passed-green.svg",
         models.JobStatus.FAILED: "CIVET-failed-red.svg",

@@ -16,13 +16,19 @@
 {% endcomment %}
 {% load humanize %}
 {% load staticfiles %}
-{% block title %}Civet: {{job.recipe.display_name}}{% endblock %}
+{% block title %}Civet: {% if job %}{{job.recipe.display_name}}{% else %}Private job{% endif %}{% endblock %}
 {% block head_scripts %}
   {{ block.super }}
   <link rel="stylesheet" href="{% static 'ci/css/ansi2html.css' %}" type="text/css" media="screen">
 {% endblock head_scripts %}
 
 {% block content %}
+{% if not job %}
+<div class="center">
+  <h3>Private Job</h3>
+  You are not allowed to view this job. Please sign in and try again.
+</div>
+{% else %}
 <ol class="breadcrumb">
   <li>{{ job.event.base.branch.repository.user }}</li>
   <li><a href="{% url "ci:view_repo" job.event.base.branch.repository.pk %}">{{ job.event.base.branch.repository.name }}</a></li>
@@ -261,9 +267,11 @@
 {% else %}
   You are not allowed to see results. Please sign in to an appropiate user.
 {% endif %}
+{% endif %}
 {% endblock content %}
 
 {% block end_scripts %}
+{% if job %}
 {{ block.super }}
 <script type="text/javascript">
 function toggle_show(id) {
@@ -384,4 +392,5 @@ function toggle_show(id) {
   });
 {% endif %}
 </script>
+{% endif %}
 {% endblock end_scripts %}

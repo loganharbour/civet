@@ -56,6 +56,19 @@ def is_collaborator(request_session, build_user, repo, user=None):
     logger.info("Is collaborator for user '%s' on %s: %s" % (user, repo, val))
     return val
 
+def visible_repos(session):
+    val = session.get("visible_repos")
+    if val and type(val) == tuple and len(val) == 2 and type(val[0]) == list and type(val[1]) == int:
+        if TimeUtils.get_local_timestamp() < val[1]:
+            return val[0]
+
+    val = ([],  TimeUtils.get_local_timestamp() + settings.COLLABORATOR_CACHE_TIMEOUT)
+    for repo in models.Repository.objects.all():
+        if can_see_repo(session, repo):
+            val[0].append(repo.id)
+    session["visible_repos"] = val
+    return val[0]
+
 def job_permissions(session, job):
     """
     Logic for a job to see who can see results, activate,
@@ -139,6 +152,29 @@ def can_see_results(session, recipe):
         return False
 
     return True
+
+def can_see_repo(session, repo):
+    """
+    Checks to see if the signed in user can see the given repo
+    Input:
+      session: HttpRequest session
+      repo: models.Repository to check against
+    Return:
+      True if the user can see the repo, false otherwise
+    """
+    if not repo.is_private():
+        return True
+
+    signed_in = repo.server().signed_in_user(session)
+    if not signed_in:
+        return False
+
+    auth_user = repo.auth_user()
+    if not auth_user:
+        logger.warning('Cannot check status for %s because no auth user is set' % repo.name)
+        return False
+
+    return signed_in == auth_user or is_collaborator(session, auth_user, repo, user=signed_in)
 
 def is_team_member(session, api, team, user):
     """

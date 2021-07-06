@@ -14,40 +14,46 @@
 # limitations under the License.
 
 from __future__ import unicode_literals, absolute_import
-from ci import models
+from ci import models, Permissions
 from django.db.models import Prefetch
 from django.urls import reverse
 from django.utils.html import format_html, escape
 
-def main_repos_status(last_modified=None):
+def filter_private_repos(event_q, session):
+    return event_q.filter(base__branch__repository__id__in=Permissions.visible_repos(session))
+
+def main_repos_status(last_modified=None, session=None):
     """
     Gets the main page repositories status.
     Input:
       last_modified: DateTime: if records with last_modified are before this they are ignored
+      session: django.http.HttpRequest.session will filter available repos
     Return:
       list of dicts containing repository information
     """
     repos = models.Repository.objects.filter(active=True)
-    return get_repos_status(repos, last_modified)
+    return get_repos_status(repos, last_modified, session=session)
 
-def filter_repos_status(pks, last_modified=None):
+def filter_repos_status(pks, last_modified=None, session=None):
     """
     Utility function to get filter some repositories by pks
     Input:
       pks: list of ints of primary keys of repositories.
       last_modified: DateTime: if records with last_modified are before this they are ignored
+      session: django.http.HttpRequest.session will filter available repos
     Return:
       list of dicts containing repository information
     """
     repos = models.Repository.objects.filter(pk__in=pks)
-    return get_repos_status(repos, last_modified)
+    return get_repos_status(repos, last_modified, session=session)
 
-def get_repos_status(repo_q, last_modified=None):
+def get_repos_status(repo_q, last_modified=None, session=None):
     """
     Get a list of open PRs, grouped by repository and sorted by repository name
     Input:
       repo_q: A query on models.Repository
       last_modified: DateTime: if records with last_modified are before this they are ignored
+      session: django.http.HttpRequest.session will filter available repos
     Return:
       list of dicts containing repository information
     """
@@ -71,13 +77,14 @@ def get_repos_status(repo_q, last_modified=None):
                 .prefetch_related(Prefetch('badges', queryset=badge_q, to_attr="active_badges"))
                 .select_related("user__server"))
 
-    return get_repos_data(repos)
+    return get_repos_data(repos, session=session)
 
-def get_user_repos_with_open_prs_status(username, last_modified=None):
+def get_user_repos_with_open_prs_status(username, last_modified=None, session=None):
     """
     Get a list of open PRs for a user, grouped by repository and sorted by repository name
     Input:
       user[models.GitUser]: The user to get the status for
+      session: django.http.HttpRequest.session will filter available repos
     Return:
       list of dicts containing repository information
     """
@@ -91,12 +98,16 @@ def get_user_repos_with_open_prs_status(username, last_modified=None):
                 .prefetch_related(Prefetch('pull_requests', queryset=pr_q, to_attr='open_prs'))
                 .select_related("user__server"))
 
-    return get_repos_data(repos)
+    return get_repos_data(repos, session=session)
 
 
-def get_repos_data(repos):
+def get_repos_data(repos, session=None):
     repos_data = []
     for repo in repos.all():
+        # Limit by session access
+        if session is not None and not Permissions.can_see_repo(session, repo):
+            continue
+
         repo_git_url = repo.repo_html_url()
         repo_url = reverse('ci:view_repo', args=[repo.pk,])
         repo_desc = format_html('<span><a href="{}"><i class="{}"></i></a></span>', repo_git_url, repo.server().icon_class())

@@ -14,8 +14,14 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 {% endcomment %}
-{% block title %}Civet: {{branch}}{% endblock %}
+{% block title %}Civet: {% if branch %}{{branch}}{% else %}Private branch{% endif %}{% endblock %}
 {% block content %}
+{% if not branch %}
+<div class="center">
+  <h3>Private Branch</h3>
+  You are not allowed to view this branch. Please sign in and try again.
+</div>
+{% else %}
 <ol class="breadcrumb">
   <li>
     {{branch.repository.user}}
@@ -48,4 +54,5 @@
 <div class="center">
   {% include "ci/page_handler.html" with objs=pages %}
 </div>
+{% endif %}
 {% endblock %}

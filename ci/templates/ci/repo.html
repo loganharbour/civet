@@ -15,8 +15,14 @@
   limitations under the License.
 {% endcomment %}
 {% load staticfiles %}
-{% block title %}Civet: {{repo}}{% endblock %}
+{% block title %}Civet: {% if repo %}{{repo}}{% else %}Private repository{% endif %}{% endblock %}
 {% block content %}
+{% if not repo %}
+  <div class="center">
+    <h3>Private Repository</h3>
+    You are not allowed to view this repo. Please sign in and try again.
+  </div>
+{% else %}
 <ol class="breadcrumb">
   <li>
     {{repo.user}}
@@ -32,10 +38,12 @@
 
 <div class="center"><h4>Latest {{event_limit}} events</h4></div>
 {% include "ci/event_table.html" with events=events_info %}
+{% endif %}
 {% endblock %}
 
 
 {% block end_scripts %}
+{% if repo %}
 {{ block.super }}
 <script type="text/javascript" src="{% static "ci/js/update.js" %}"></script>
 <script type="text/javascript">
@@ -70,4 +78,5 @@ $(document).ready(function() {
   }
 });
 </script>
+{% endif %}
 {% endblock end_scripts %}

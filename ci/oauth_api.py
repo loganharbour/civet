@@ -72,7 +72,7 @@ class OAuth(object):
         self._user_url = None
         self._callback_user_key = None
         self._scope = None
-        self._addition_keys = ["allowed_to_see_clients", "teams"]
+        self._addition_keys = ["allowed_to_see_clients", "teams", "visible_repos"]
         self._redirect_uri = None
 
     def start_session(self, session):
