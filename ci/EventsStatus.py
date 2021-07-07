@@ -21,17 +21,6 @@ from django.db.models import Prefetch
 import copy
 from django.utils.encoding import force_text
 
-def filter_visible_events(event_q, session):
-    """
-    Filters the given event query with the repos that the user is allowed to see
-    Input:
-      event_q: An existing models.Event query
-      session: django.http.HttpRequest.session
-    Return:
-      a query on models.Event filtered with visible repos
-    """
-    return event_q.filter(base__branch__repository__pk__in=Permissions.visible_repos(session))
-
 def get_default_events_query(event_q=None, session=None):
     """
     Default events query that preloads all that will be needed in events_info()
@@ -54,7 +43,7 @@ def get_default_events_query(event_q=None, session=None):
         ).prefetch_related(Prefetch('jobs', queryset=jobs_q))
 
     if session:
-        event_q = filter_visible_events(event_q, session)
+        event_q = event_q.filter(base__branch__repository__pk__in=Permissions.visible_repos(session))
 
     return event_q
 
@@ -71,13 +60,12 @@ def all_events_info(limit=30, last_modified=None, session=None):
     event_q = get_default_events_query(session=session)[:limit]
     return multiline_events_info(event_q, last_modified)
 
-def get_single_event_for_open_prs(open_prs, last_modified=None, session=None):
+def get_single_event_for_open_prs(open_prs, last_modified=None):
     """
     Get the latest event for a set of open prs
     Input:
         list[int]: A list of models.PullRequest.pk
         last_modified[Datetime]: Limit results to those modified after this date
-        session: django.http.HttpRequest.session; provide to limit the query to visible repos
     Return:
         list[models.Event]: The latest event for each pull request
     """
