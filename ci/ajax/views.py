@@ -281,7 +281,7 @@ def user_open_prs(request, username):
         return HttpResponseBadRequest('Missing parameters')
 
     session = None
-    if hasattr(request, session):
+    if hasattr(request, "session"):
         session = request.session
 
     this_request = TimeUtils.get_local_timestamp()
