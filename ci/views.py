@@ -76,7 +76,7 @@ def get_user_repos_info(request, limit=30, last_modified=None):
         default = True
 
     session = None
-    if hasattr(request, "session")
+    if hasattr(request, "session"):
         session = request.session
 
     if pks:
