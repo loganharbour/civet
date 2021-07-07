@@ -60,18 +60,21 @@ def all_events_info(limit=30, last_modified=None, session=None):
     event_q = get_default_events_query(session=session)[:limit]
     return multiline_events_info(event_q, last_modified)
 
-def get_single_event_for_open_prs(open_prs, last_modified=None):
+def get_single_event_for_open_prs(open_prs, last_modified=None, session=None):
     """
     Get the latest event for a set of open prs
     Input:
         list[int]: A list of models.PullRequest.pk
         last_modified[Datetime]: Limit results to those modified after this date
+        session: django.http.HttpRequest.session; provide to limit the query to visible repos
     Return:
         list[models.Event]: The latest event for each pull request
     """
     if not open_prs:
         return []
     prs = models.PullRequest.objects.filter(pk__in=open_prs)
+    if session:
+        prs = prs.filter(repository__pk__in=Permissions.visible_repos(session))
     evs = []
     for pr in prs.all():
         ev = pr.events.order_by('-created').first()
