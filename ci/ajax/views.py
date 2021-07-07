@@ -280,23 +280,27 @@ def user_open_prs(request, username):
     if 'last_request' not in request.GET:
         return HttpResponseBadRequest('Missing parameters')
 
+    session = None
+    if hasattr(request, session):
+        session = request.session
+
     this_request = TimeUtils.get_local_timestamp()
     last_request = int(float(request.GET['last_request'])) # in case it has decimals
     dt = timezone.localtime(timezone.make_aware(datetime.datetime.utcfromtimestamp(last_request)))
-    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username, session=request.session)
+    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username, session=session)
     repo_ids = []
     pr_ids = []
     for r in repos:
         repo_ids.append(r["id"])
         for pr in r["prs"]:
             pr_ids.append(pr["id"])
-    event_list = EventsStatus.get_single_event_for_open_prs(pr_ids, session=request.session)
+    event_list = EventsStatus.get_single_event_for_open_prs(pr_ids, session=session)
     evs_info = EventsStatus.multiline_events_info(event_list)
     ev_ids = []
     for e in evs_info:
         ev_ids.append(e["id"])
     # Now get the changed ones
-    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username, dt, session=request.session)
+    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username, dt, session=session)
     evs_info = EventsStatus.multiline_events_info(event_list, dt)
 
     data = {'repos': repo_ids,
