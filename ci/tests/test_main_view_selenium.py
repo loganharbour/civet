@@ -201,6 +201,7 @@ class Tests(SeleniumTester.SeleniumTester):
             self.create_event_with_jobs(user=repo.user, branch1=branch, branch2=branch)
             repos.append(repo)
             self.wait_for_js(wait=1)
+        self.create_repo_with_prs(name="private", private=True)
         # user not logged in
         self.get()
         self.check_repos()

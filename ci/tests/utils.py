@@ -102,9 +102,15 @@ def create_user_with_token(name='testUser', server=None):
 def get_owner():
     return create_user(name='testmb')
 
-def create_repo(name='testRepo', user=None, server=None):
+def create_repo(name='testRepo', user=None, server=None, private=False):
     if not user:
         user = create_user_with_token(server=server)
+
+    if private:
+        name = '%s/%s' % (user.name, name)
+        settings.github_repo_settings[name]['private'] = True
+        settings.github_repo_settings[name]['auth_user'] = user.name
+
     return models.Repository.objects.get_or_create(name=name, user=user)[0]
 
 def create_branch(name='testBranch', user=None, repo=None):

@@ -267,8 +267,8 @@ class SeleniumTester(StaticLiveServerTestCase):
                 self.assertGreater(prev_date, date)
                 prev_date = date
 
-    def create_repo_with_prs(self, name="Repo0"):
-        repo = utils.create_repo(name=name)
+    def create_repo_with_prs(self, name="Repo0", private=False):
+        repo = utils.create_repo(name=name, private=private)
         branch = utils.create_branch(name="branch1", repo=repo)
         repo.active = True
         repo.save()
