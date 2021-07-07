@@ -22,7 +22,15 @@ import copy
 from django.utils.encoding import force_text
 
 def filter_visible_events(event_q, session):
-    return event_q.filter(base__branch__repository__id__in=Permissions.visible_repos(session))
+    """
+    Filters the given event query with the repos that the user is allowed to see
+    Input:
+      event_q: An existing models.Event query
+      session: django.http.HttpRequest.session
+    Return:
+      a query on models.Event filtered with visible repos
+    """
+    return event_q.filter(base__branch__repository__pk__in=Permissions.visible_repos(session))
 
 def get_default_events_query(event_q=None, session=None):
     """

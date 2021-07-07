@@ -65,7 +65,7 @@ def visible_repos(session):
     val = ([],  TimeUtils.get_local_timestamp() + settings.COLLABORATOR_CACHE_TIMEOUT)
     for repo in models.Repository.objects.all():
         if can_see_repo(session, repo):
-            val[0].append(repo.id)
+            val[0].append(repo.pk)
     session["visible_repos"] = val
     return val[0]
 

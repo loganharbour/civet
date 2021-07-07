@@ -503,7 +503,7 @@ def view_user(request, username):
 
 def pr_list(request):
     pr_list = (models.PullRequest.objects
-                .filter(repository__id__in=Permissions.visible_repos(request.session))
+                .filter(repository__pk__in=Permissions.visible_repos(request.session))
                 .order_by('-created')
                 .select_related('repository__user__server')
                 .order_by('repository__user__name', 'repository__name', 'number'))
@@ -512,7 +512,7 @@ def pr_list(request):
 
 def branch_list(request):
     branch_list = (models.Branch.objects
-                    .filter(repository__id__in=Permissions.visible_repos(request.session))
+                    .filter(repository__pk__in=Permissions.visible_repos(request.session))
                     .exclude(status=models.JobStatus.NOT_STARTED)
                     .select_related('repository__user__server')
                     .order_by('repository__user__name', 'repository__name', 'name'))
@@ -1066,7 +1066,7 @@ def job_info_search(request):
     if request.method == "GET":
         form = forms.JobInfoForm(request.GET)
         if form.is_valid():
-            jobs = models.Job.objects.filter(event__base__branch__repository__id__in=Permissions.visible_repos(request.session))
+            jobs = models.Job.objects.filter(event__base__branch__repository__pk__in=Permissions.visible_repos(request.session))
             jobs = jobs.order_by("-created").select_related("event",
                 "recipe",
                 'config',

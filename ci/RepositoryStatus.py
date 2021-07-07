@@ -20,7 +20,7 @@ from django.urls import reverse
 from django.utils.html import format_html, escape
 
 def filter_private_repos(event_q, session):
-    return event_q.filter(base__branch__repository__id__in=Permissions.visible_repos(session))
+    return event_q.filter(base__branch__repository__pk__in=Permissions.visible_repos(session))
 
 def main_repos_status(last_modified=None, session=None):
     """
