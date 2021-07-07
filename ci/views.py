@@ -74,12 +74,17 @@ def get_user_repos_info(request, limit=30, last_modified=None):
                     pks.append(repo.pk)
     else:
         default = True
+
+    session = None
+    if hasattr(request, "session")
+        session = request.session
+
     if pks:
-        repos = RepositoryStatus.filter_repos_status(pks, last_modified=last_modified, session=request.session)
-        evs_info = EventsStatus.events_filter_by_repo(pks, limit=limit, last_modified=last_modified, session=request.session)
+        repos = RepositoryStatus.filter_repos_status(pks, last_modified=last_modified, session=session)
+        evs_info = EventsStatus.events_filter_by_repo(pks, limit=limit, last_modified=last_modified, session=session)
     else:
-        repos = RepositoryStatus.main_repos_status(last_modified=last_modified, session=request.session)
-        evs_info = EventsStatus.all_events_info(limit=limit, last_modified=last_modified, session=request.session)
+        repos = RepositoryStatus.main_repos_status(last_modified=last_modified, session=session)
+        evs_info = EventsStatus.all_events_info(limit=limit, last_modified=last_modified, session=session)
     return repos, evs_info, default
 
 def sorted_clients(client_q):
@@ -149,7 +154,7 @@ def user_repo_settings(request):
 
             for pk in form.cleaned_data["repositories"]:
                 repo = models.Repository.objects.get(pk=pk)
-                if Permissions.can_see_repo(repo):
+                if Permissions.can_see_repo(request.session, repo):
                     user = users[repo.server().pk]
                     user.preferred_repos.add(repo)
 
