@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Battelle Energy Alliance, LLC
+ * Copyright 2016-2025 Battelle Energy Alliance, LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,17 +57,21 @@ a {
   vertical-align: middle;
   text-align: center;
 }
-/*Status box shadows*/
-[class^="boxed_job_status"] {
+/*PRs should have a smaller box status*/
+.pr_list [class^="boxed_job_status"], [class^="badge_job_status_Failed"], [class^="badge_job_status_Passed"], [class^="badge_job_status_Running"], [class^="badge_job_status_Canceled"] {
   width: 60px;
+}
+/*Status box shadows*/
+[class^="boxed_job_status"], [class^="badge_job_status_Failed"], [class^="badge_job_status_Passed"], [class^="badge_job_status_Running"], [class^="badge_job_status_Canceled"] {
+  width: 90px;
   box-shadow: 1px 1px 2px var(--darker-embossed);
   display: inline-block;
 }
-/*The Failed_OK Status box is a bit larger than the rest*/
 [class^="badge_job_status"] {
-  width: 80px;
+  width: 90px;
   box-shadow: 1px 1px 2px var(--darker-embossed);
-  display: inline-block;
+  display:af
+inline-block;
 }
 /*Activate Statuses*/
 [class$="_Activation_Required"], [class$="_Activation_Required"] a, div[class$="_Activation_Required"] {
@@ -91,6 +95,11 @@ a {
 [class$="_Intermittent_Failure"], div[class$="_Intermittent_Failure"] {
   background: repeating-linear-gradient(45deg, var(--intermittent-back), var(--intermittent-back) 10px, var(--red-light) 10px, var(--red-light) 20px)!important;
   color: var(--intermittent-fore) !important;
+}
+/*Skipped Statuses*/
+[class$="_Skipped"], [class$="_Skipped"] a, div[class$="_Skipped"] {
+  background-color: var(--blue-back);
+  color: var(--blue-fore);
 }
 /*Failed OK Statuses*/
 [class$="_Failed_OK"], [class$="_Failed_OK"] a, div[class$="_Failed_OK"], .client_NotActive {
@@ -248,6 +257,14 @@ pre.job_result_output {
  }
  .navbar-default .navbar-brand {
    color: var(--dark-mode-fore);
+ }
+ .navbar-default .navbar-nav>.open>a, .navbar-default .navbar-nav>.open>a:focus, .navbar-default .navbar-nav>.open>a:hover {
+   color: #fff !important;
+   background-color: #3c556f !important;
+  }
+ .dropdown-menu > li > a:focus, .dropdown-menu > li > a:hover {
+   text-decoration: none;
+   background-color: #3c556f !important;
  }
  .btn-defaut {
    border: 1px solid var(--darker-embossed);

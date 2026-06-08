@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -477,15 +477,6 @@ class Tests(TestCase):
             self.assertEqual(models.JobStatus.to_str(i[0]), i[1])
         for i in models.JobStatus.SHORT_CHOICES:
             self.assertEqual(models.JobStatus.to_slug(i[0]), i[1])
-
-    def test_osversion(self):
-        os, created = models.OSVersion.objects.get_or_create(name="os", version="1")
-        self.assertIn("os", os.__str__())
-        self.assertIn("1", os.__str__())
-
-    def test_loadedmodule(self):
-        mod, created = models.LoadedModule.objects.get_or_create(name="module")
-        self.assertIn("module", mod.__str__())
 
     def test_humanize_bytes(self):
         self.assertEqual(models.humanize_bytes(10), "10.0 B")

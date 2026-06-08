@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,16 +16,6 @@
 from __future__ import unicode_literals, absolute_import
 from django import forms
 from ci import models
-
-class JobInfoForm(forms.Form):
-    os_versions = forms.ModelMultipleChoiceField(
-        queryset=models.OSVersion.objects.order_by("name", "version"),
-        widget=forms.CheckboxSelectMultiple,
-        required=False)
-    modules = forms.ModelMultipleChoiceField(
-        queryset=models.LoadedModule.objects.order_by("name"),
-        widget=forms.CheckboxSelectMultiple,
-        required=False)
 
 class AlternateRecipesForm(forms.Form):
     recipes = forms.MultipleChoiceField(widget=forms.CheckboxSelectMultiple, required=False)

@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -58,3 +58,40 @@ class Tests(SimpleTestCase):
 
         # not set, should just return
         c.set_log_file("")
+
+    def test_get_client_info(self):
+        c = utils.create_base_client()
+
+        with self.assertRaises(BaseClient.ClientException):
+            c.get_client_info('foo')
+
+        self.assertEqual(c.get_client_info('client_name'), c.client_info['client_name'])
+
+    def test_set_client_info(self):
+        c = utils.create_base_client()
+
+        with self.assertRaises(BaseClient.ClientException):
+            c.set_client_info('foo', None)
+
+        c.set_client_info('client_name', 'foo')
+        self.assertEqual(c.get_client_info('client_name'), 'foo')
+
+    def test_add_config(self):
+        with self.assertRaises(BaseClient.ClientException):
+            c = utils.create_base_client()
+            c.add_config(1)
+        with self.assertRaises(BaseClient.ClientException):
+            c = utils.create_base_client()
+            c.add_config('foo')
+            c.add_config('foo')
+        c = utils.create_base_client()
+        c.add_config('bar')
+
+    def test_environment(self):
+        c = utils.create_base_client()
+        self.assertNotIn('FOO', c.get_environment())
+        with self.assertRaises(BaseClient.ClientException):
+            c.get_environment('FOO')
+        c.set_environment('FOO', 'bar')
+        self.assertEqual('bar', c.get_environment('FOO'))
+        self.assertEqual(c.client_info['environment'], c.get_environment())

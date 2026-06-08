@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -227,6 +227,7 @@ class RecipeCreator(object):
             repository=repo,
             branch=branch,
             cause=cause,
+            scheduler=recipe['scheduler']
             )
         recipe_rec.name = recipe["name"]
         recipe_rec.name = recipe["display_name"]

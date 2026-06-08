@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,10 @@ def installed_gitservers(request):
                 "hostname": s["hostname"],
                 "icon_class": s["icon_class"],
                 "html_url": s["html_url"],
+                "displayname" : ""
                 }
+        if "login_label" in s.keys():
+            d["displayname"] = s["login_label"]
         if s["type"] == settings.GITSERVER_GITHUB:
             d["sign_in"] = reverse("ci:github:sign_in", args=[s["hostname"]])
             d["sign_out"] = reverse("ci:github:sign_out", args=[s["hostname"]])

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -70,6 +70,14 @@ class Tests(DBTester.DBTester):
         q = EventsStatus.get_default_events_query()
         with self.assertNumQueries(1):
             self.assertEqual(q.count(), 3)
+
+        q = EventsStatus.get_default_events_query(filter_repo_ids=[self.repo.id])
+        with self.assertNumQueries(1):
+            self.assertEqual(q.count(), 3)
+
+        q = EventsStatus.get_default_events_query(filter_repo_ids=[])
+        with self.assertNumQueries(0):
+            self.assertEqual(q.count(), 0)
 
         event_q = models.Event.objects.filter(head__sha="1234")
         q = EventsStatus.get_default_events_query(event_q=event_q)
@@ -160,6 +168,14 @@ class Tests(DBTester.DBTester):
             self.assertEqual(info[0].pk, latest_event.pk)
             # pre, test, test1, merge
             self.assertEqual(info[0].jobs.count(), 4)
+
+        with self.assertNumQueries(0):
+            info = EventsStatus.get_single_event_for_open_prs([pr.pk], filter_repo_ids=[])
+            self.assertEqual(len(info), 0)
+
+        with self.assertNumQueries(2):
+            info = EventsStatus.get_single_event_for_open_prs([pr.pk], filter_repo_ids=[self.repo.id])
+            self.assertEqual(len(info), 1)
 
         last_modified = latest_event.last_modified + datetime.timedelta(0,10)
 

@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -49,14 +49,6 @@ class RecipeAdmin(admin.ModelAdmin):
 
 @admin.register(models.GitUser)
 class GitUserAdmin(admin.ModelAdmin):
-    search_fields = ['name']
-
-@admin.register(models.OSVersion)
-class OSVersionAdmin(admin.ModelAdmin):
-    search_fields = ['name', 'version', 'other']
-
-@admin.register(models.LoadedModule)
-class LoadedModuleAdmin(admin.ModelAdmin):
     search_fields = ['name']
 
 @admin.register(models.Repository)

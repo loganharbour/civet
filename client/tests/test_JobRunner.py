@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,17 +34,17 @@ except ImportError:
 class Tests(SimpleTestCase):
     def setUp(self):
         self.build_root = "/foo/bar"
-        os.environ["BUILD_ROOT"] = self.build_root
         self.message_q = Queue()
         self.command_q = Queue()
 
     def create_runner(self):
         client_info = utils.default_client_info()
+        client_info['environment']['BUILD_ROOT'] = self.build_root
         job_info = utils.create_job_dict()
-        runner = JobRunner.JobRunner(client_info, job_info, self.message_q, self.command_q)
+        runner = JobRunner.JobRunner(client_info, job_info, self.message_q, self.command_q, 1234)
         self.assertEqual(runner.canceled, False)
         self.assertEqual(runner.stopped, False)
-        self.assertEqual(runner.global_env["var_with_root"], "%s/bar" % self.build_root)
+        self.assertEqual(runner.local_env["var_with_root"], "%s/bar" % self.build_root)
         self.assertEqual(runner.job_data["steps"][0]["environment"]["step_var_with_root"], "%s/foo" % self.build_root)
         return runner
 
@@ -72,6 +72,10 @@ class Tests(SimpleTestCase):
 
         # normal run
         results = r.run_job()
+        self.assertFalse(r.job_killed)
+        self.assertFalse(r.canceled)
+        self.assertFalse(r.stopped)
+        self.assertFalse(r.error)
         self.check_job_results(results, r)
 
         # test bad exit_status
@@ -104,6 +108,15 @@ class Tests(SimpleTestCase):
         r.error = True
         results = r.run_job()
         self.check_job_results(results, r, canceled=True, failed=True)
+
+        # test skipped
+        r.canceled = False
+        r.stopped = False
+        r.error = False
+        run_step_results['exit_status'] = 86
+        mock_run_step.return_value = run_step_results
+        results = r.run_job()
+        self.check_job_results(results, r)
 
     def test_update_step(self):
         r = self.create_runner()
@@ -214,9 +227,33 @@ class Tests(SimpleTestCase):
                 # Test cancel while reading output
                 self.command_q.put({"job_id": r.job_data["job_id"], "command": "cancel"})
                 self.assertEqual(r.canceled, False)
+                self.assertFalse(r.job_killed)
                 r.read_process_output(proc, r.job_data["steps"][0], {})
                 proc.wait()
                 self.assertEqual(r.canceled, True)
+                self.assertTrue(r.job_killed)
+
+    def test_read_over_max_output(self):
+        r = self.create_runner()
+        r.client_info["update_step_time"] = 1
+        r.max_output_size = 1024
+        with JobRunner.temp_file() as script_file:
+            script = b"for i in $(seq 5);do for j in $(seq 5);do for k in $(seq 5);do echo start $i-$j-$k; echo done $i-$j-$k; done; done; done"
+            script_file.write(script)
+            script_file.close()
+            with open(os.devnull, "wb") as devnull:
+                proc = r.create_process(script_file.name, {}, devnull)
+                # standard run of the subprocess
+                # check we get the start and end of the output but not middle
+                out = r.read_process_output(proc, r.job_data["steps"][0], {})
+                proc.wait()
+
+                self.assertIn("start 1-1-1", out["output"])
+                self.assertIn("start 1-3-5", out["output"])
+                self.assertTrue("start 3-2-1" not in out["output"])
+                self.assertIn("Output size exceeded", out["output"])
+                self.assertIn("start 5-3-1", out["output"])
+                self.assertIn("start 5-5-5", out["output"])
 
     def test_kill_job(self):
         with JobRunner.temp_file() as script:
@@ -225,11 +262,14 @@ class Tests(SimpleTestCase):
             with open(os.devnull, "wb") as devnull:
                 r = self.create_runner()
                 proc = r.create_process(script.name, {}, devnull)
+                self.assertFalse(r.job_killed)
                 r.kill_job(proc)
                 self.assertEqual(proc.poll(), -15) # SIGTERM
                 proc.wait()
+                self.assertTrue(r.job_killed)
                 # get some coverage when the proc is already dead
                 r.kill_job(proc)
+                self.assertTrue(r.job_killed)
 
                 # the kill path for windows is different, just get some
                 # coverage because we don't currently have a windows box
@@ -263,6 +303,7 @@ class Tests(SimpleTestCase):
         self.assertIn('test_output2', results['output'])
         self.assertEqual(results['exit_status'], 0)
         self.assertEqual(results['canceled'], False)
+        self.assertFalse(r.job_killed)
         self.assertGreater(results['time'], 1)
         # Make sure run_step doesn't touch the environment
         self.assertEqual(r.global_env, global_env_orig)
@@ -273,11 +314,13 @@ class Tests(SimpleTestCase):
         results = r.run_step(r.job_data["steps"][0])
         self.assertIn('command not found', results['output'])
         self.assertIn('Output size exceeded limit', results['output'])
+        self.assertFalse(r.job_killed)
 
         self.command_q.put({"job_id": r.job_data["job_id"], "command": "cancel"})
         results = r.run_step(r.job_data["steps"][0])
         self.assertEqual(results['canceled'], True)
         self.assertEqual(r.canceled, True)
+        self.assertTrue(r.job_killed)
 
         # just get some coverage
         with patch.object(JobRunner.JobRunner, "read_process_output") as mock_proc:
@@ -286,6 +329,7 @@ class Tests(SimpleTestCase):
             results = r.run_step(r.job_data["steps"][0])
             self.assertEqual(results['canceled'], True)
             self.assertEqual(r.canceled, True)
+            self.assertTrue(r.job_killed)
 
         # Simulate out of disk space error
         with patch.object(JobRunner.JobRunner, "run_step_process") as mock_run:
@@ -295,6 +339,7 @@ class Tests(SimpleTestCase):
             self.assertEqual(results['exit_status'], 1)
             self.assertEqual(r.canceled, False)
             self.assertEqual(r.error, True)
+            self.assertTrue(r.job_killed)
 
     @patch.object(platform, 'system')
     def test_run_step_platform(self, mock_system):
@@ -324,7 +369,7 @@ class Tests(SimpleTestCase):
         r.clean_env(test_env)
         self.assertEqual(test_env["another"], "%s/foo" % self.build_root)
         test_env = env.copy()
-        del os.environ["BUILD_ROOT"]
+        del r.client_info['environment']['BUILD_ROOT']
         r.clean_env(test_env)
         self.assertEqual(test_env["another"], "%s/foo" % os.getcwd())
 
@@ -340,3 +385,29 @@ class Tests(SimpleTestCase):
                 self.assertIn("taking longer than the max", out["output"])
                 self.assertLess(out["time"], 10)
                 self.assertEqual(out["canceled"], True)
+                self.assertTrue(r.job_killed)
+
+    def test_max_step_time_and_output(self):
+        with JobRunner.temp_file() as script_file:
+            script = b"for i in $(seq 5);do for j in $(seq 5);do for k in $(seq 5);do echo start $i-$j-$k; echo done $i-$j-$k; done; done; done; sleep 30"
+            script_file.write(script)
+            script_file.close()
+            with open(os.devnull, "wb") as devnull:
+                r = self.create_runner()
+                r.client_info["update_step_time"] = 1
+                r.max_output_size = 1024
+                r.max_step_time = 4
+                proc = r.create_process(script_file.name, {}, devnull)
+                out = r.read_process_output(proc, r.job_data["steps"][0], {})
+
+                self.assertIn("start 1-1-1", out["output"])
+                self.assertIn("start 1-3-5", out["output"])
+                self.assertTrue("start 3-2-1" not in out["output"])
+                self.assertIn("Output size exceeded", out["output"])
+                self.assertIn("start 5-3-1", out["output"])
+                self.assertIn("start 5-5-5", out["output"])
+
+                self.assertIn("taking longer than the max", out["output"])
+                self.assertLess(out["time"], 10)
+                self.assertEqual(out["canceled"], True)
+                self.assertTrue(r.job_killed)

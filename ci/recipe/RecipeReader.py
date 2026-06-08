@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,7 +83,6 @@ class RecipeReader(object):
                 val = self.config.getint(section, option)
             else:
                 val = self.config.get(section, option)
-
             return val
         except configparser.NoSectionError:
             self.error("Section '%s' does not exist. Failed to get option '%s'" % (section, option))
@@ -268,9 +267,19 @@ class RecipeReader(object):
 
             step_data["name"] = step_section
             step_data["script"] = script
-            step_data["abort_on_failure"] = self.get_option(step_section, "abort_on_failure", False)
-            step_data["allowed_to_fail"] = self.get_option(step_section, "allowed_to_fail", False)
+
+            # Allow the global environment to set abort_on_failure and allowed_to_fail
+            # if it is not set in the step
+            for option in ['abort_on_failure', 'allowed_to_fail']:
+                if self.config.has_option(step_section, option):
+                    step_data[option] = self.get_option(step_section, option, False)
+                elif self.config.has_option('Global Environment', option):
+                    step_data[option] = self.get_option('Global Environment', option, False)
+                else:
+                    step_data[option] = False
+
             step_data["position"] = idx
+
             for item in self.config.items(step_section):
                 self.set_env(step_data, "environment", step_section)
 
@@ -314,6 +323,7 @@ class RecipeReader(object):
         recipe["repository"] = self.get_option("Main", "repository", "")
         recipe["activate_label"] = self.get_option("Main", "activate_label", "")
         recipe["create_issue_on_fail"] = self.get_option("Main", "create_issue_on_fail", False)
+        recipe["scheduler"] = self.get_option("Main", "scheduler", "")
         recipe["create_issue_on_fail_message"] = self.get_option("Main",
                 "create_issue_on_fail_message", "")
         recipe["create_issue_on_fail_new_comment"] = self.get_option("Main",

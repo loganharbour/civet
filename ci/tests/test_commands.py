@@ -1,4 +1,4 @@
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 from __future__ import unicode_literals, absolute_import
 from django.core import management
 from django.core.management.base import CommandError
-from django.utils.six import StringIO
+from six import StringIO
 from django.test import override_settings
 from mock import patch
 from ci import models, TimeUtils

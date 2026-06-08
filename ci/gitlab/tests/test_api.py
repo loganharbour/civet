@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,6 +48,16 @@ class Tests(DBTester.DBTester):
         api.branch_html_url("owner", "repo", "branch")
         api.repo_html_url("owner", "repo")
         api.commit_html_url("owner", "repo", "sha")
+
+    def test_can_view_repo(self):
+        api = self.server.api()
+        api._api_url = 'https://gitlab.com/api/v4'
+
+        petsc_exists = api.can_view_repo('petsc', 'petsc')
+        self.assertTrue(petsc_exists)
+
+        bad_repo_exists = api.can_view_repo('foobar123', 'bazbang456')
+        self.assertFalse(bad_repo_exists)
 
     @patch.object(requests, 'get')
     def test_get_repos(self, mock_get):
@@ -213,7 +223,7 @@ class Tests(DBTester.DBTester):
         api.pr_comment('url', 'message')
 
     @patch.object(requests, 'post')
-    def test_update_pr_status(self, mock_post):
+    def test_update_status(self, mock_post):
         mock_post.return_value = utils.Response()
         ev = utils.create_event(user=self.build_user)
         pr = utils.create_pr(server=self.server)
@@ -223,39 +233,39 @@ class Tests(DBTester.DBTester):
         with self.settings(INSTALLED_GITSERVERS=[utils.gitlab_config(remote_update=True)]):
             mock_post.return_value = utils.Response(status_code=200, content="some content")
             api = self.server.api()
-            api.update_pr_status(ev.base,
+            api.update_status(ev.base,
                     ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_JOB_STARTED)
             self.assertEqual(mock_post.call_count, 1)
 
-            api.update_pr_status(ev.base,
+            api.update_status(ev.base,
                     ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_CONTINUE_RUNNING)
             self.assertEqual(mock_post.call_count, 1)
 
             # Not updated
-            api.update_pr_status(ev.base,
+            api.update_status(ev.base,
                     ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_START_RUNNING)
             self.assertEqual(mock_post.call_count, 1)
 
             mock_post.return_value = utils.Response(json_data={"error": "some error"},
                     status_code=404)
-            api.update_pr_status(ev.base,
+            api.update_status(ev.base,
                     ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_JOB_STARTED)
             self.assertEqual(mock_post.call_count, 2)
 
             mock_post.return_value = utils.Response(json_data={"error": "some error"},
                     status_code=205)
-            api.update_pr_status(ev.base,
+            api.update_status(ev.base,
                     ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_JOB_STARTED)
             self.assertEqual(mock_post.call_count, 3)
 
             mock_post.side_effect = Exception('BAM!')
-            api.update_pr_status(ev.base,
+            api.update_status(ev.base,
                     ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_JOB_STARTED)
             self.assertEqual(mock_post.call_count, 4)
 
         # This should just return
         api = self.server.api()
-        api.update_pr_status(ev.base,
+        api.update_status(ev.base,
                 ev.head, api.PENDING, 'event', 'desc', 'context', api.STATUS_JOB_STARTED)
         self.assertEqual(mock_post.call_count, 4)
 

@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -107,6 +107,12 @@ class GitHubAPI(GitAPI):
             owner_repo.sort()
         return owner_repo
 
+    @copydoc(GitAPI.can_view_repo)
+    def can_view_repo(self, owner, name):
+        url = f'{self._api_url}/repos/{owner}/{name}'
+        response = self.get(url)
+        return response is not None and not self._bad_response
+
     @copydoc(GitAPI.get_repos)
     def get_repos(self, session):
         if self._repos_key in session:
@@ -140,13 +146,13 @@ class GitHubAPI(GitAPI):
             org_repo.sort()
         return org_repo
 
-    @copydoc(GitAPI.update_pr_status)
-    def update_pr_status(self, base, head, state, event_url, description, context, job_stage):
-        self._update_pr_status(base.user().name, base.repo().name, head.sha, state, event_url, description, context)
+    @copydoc(GitAPI.update_status)
+    def update_status(self, base, head, state, event_url, description, context, job_stage):
+        self._update_status(base.user().name, base.repo().name, head.sha, state, event_url, description, context)
 
-    def _update_pr_status(self, owner, repo, sha, state, event_url, description, context):
+    def _update_status(self, owner, repo, sha, state, event_url, description, context):
         """
-        Utility function that implements GitAPI.update_pr_status
+        Utility function that implements GitAPI.update_status
         """
 
         if not self._update_remote:
@@ -166,7 +172,7 @@ class GitHubAPI(GitAPI):
 
         self.post(url, data=data, timeout=timeout)
         if not self._bad_response:
-            logger.info("Set pr status %s:\nSent Data:\n%s" % (url, self._format_json(data)))
+            logger.info("Set status %s:\nSent Data:\n%s" % (url, self._format_json(data)))
 
     def _remove_pr_todo_labels(self, owner, repo, pr_num):
         """

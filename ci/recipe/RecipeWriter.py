@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 from __future__ import unicode_literals, absolute_import
 import os
 from ci.recipe import file_utils
-from django.utils.six import StringIO
+from six import StringIO
 try:
     import configparser
 except ImportError:

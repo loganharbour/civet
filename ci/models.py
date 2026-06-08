@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,8 @@ from __future__ import unicode_literals, absolute_import
 from django.db import models
 from django.conf import settings
 from django.urls import reverse
-from django.utils.encoding import python_2_unicode_compatible
+from django.utils.timezone import make_aware
+from six import python_2_unicode_compatible
 from ci.gitlab import api as gitlab_api
 from ci.gitlab import oauth as gitlab_auth
 from ci.bitbucket import api as bitbucket_api
@@ -31,6 +32,7 @@ from ci import TimeUtils
 import json
 import ansi2html
 import logging
+import pytz
 from django.db.models import Sum
 logger = logging.getLogger('ci')
 
@@ -46,6 +48,7 @@ class JobStatus(object):
     CANCELED = 5
     ACTIVATION_REQUIRED = 6
     INTERMITTENT_FAILURE = 7
+    SKIPPED = 8
 
     STATUS_CHOICES = ((NOT_STARTED, "Not started"),
         (SUCCESS, "Passed"),
@@ -55,6 +58,7 @@ class JobStatus(object):
         (CANCELED, "Canceled by user"),
         (ACTIVATION_REQUIRED, "Requires activation"),
         (INTERMITTENT_FAILURE, "Intermittent Failure"),
+        (SKIPPED, "Skipped"),
         )
     SHORT_CHOICES = (
         (NOT_STARTED, "Not_Started"),
@@ -65,6 +69,7 @@ class JobStatus(object):
         (CANCELED, 'Canceled'),
         (ACTIVATION_REQUIRED, 'Activation_Required'),
         (INTERMITTENT_FAILURE, "Intermittent_Failure"),
+        (SKIPPED, "Skipped"),
         )
 
     @staticmethod
@@ -134,6 +139,9 @@ class GitServer(models.Model):
     def signed_in_user(self, session):
         return self.auth().signed_in_user(self, session)
 
+    def get_admins(self):
+        return self.server_config().get('admins', [])
+
 def generate_build_key():
     return random.SystemRandom().randint(0, 2000000000)
 
@@ -168,6 +176,9 @@ class GitUser(models.Model):
     def auth(self):
         return self.server.auth()
 
+    def is_admin(self):
+        return self.name in self.server.get_admins()
+
     class Meta:
         unique_together = ['name', 'server']
         ordering = ['name']
@@ -201,9 +212,11 @@ class Repository(models.Model):
     def get_open_prs_from_server(self, access_user):
         return access_user.api().get_open_prs(self.user.name, self.name)
 
+    def server_config(self):
+        return self.server().server_config()
+
     def repo_settings(self):
-        config = self.user.server.server_config()
-        repos_settings = config.get("repository_settings", {})
+        repos_settings = self.server_config().get("repository_settings", {})
         if repos_settings:
             return repos_settings.get("%s/%s" % (self.user.name, self.name), {})
         else:
@@ -229,6 +242,9 @@ class Repository(models.Model):
     def auto_merge_enabled(self):
         return self.get_repo_setting("auto_merge_enabled", False)
 
+    def public(self):
+        return self.get_repo_setting("public", self.server_config().get('public_default', False))
+
     class Meta:
         unique_together = ['user', 'name']
 
@@ -250,10 +266,6 @@ class Branch(models.Model):
 
     def server(self):
         return self.repository.user.server
-
-    def branch_html_url(self):
-        server = self.server()
-        return server.api().branch_html_url(self.repository.user.name, self.repository.name, self.name)
 
     def status_slug(self):
         return JobStatus.to_slug(self.status)
@@ -585,7 +597,7 @@ class Event(models.Model):
                 continue
             ready = True
             for d in deps:
-                if not d.complete or d.status not in [JobStatus.FAILED_OK, JobStatus.SUCCESS, JobStatus.INTERMITTENT_FAILURE]:
+                if not d.complete or d.status not in [JobStatus.FAILED_OK, JobStatus.SUCCESS, JobStatus.INTERMITTENT_FAILURE, JobStatus.SKIPPED]:
                     logger.info('job {}: {} does not have depends met: {}'.format(job.pk, job, d))
                     ready = False
                     break
@@ -703,6 +715,9 @@ class Recipe(models.Model):
     activate_label = models.CharField(max_length=120, blank=True)
     last_modified = models.DateTimeField(auto_now=True)
     created = models.DateTimeField(auto_now_add=True)
+    scheduler = models.CharField(max_length=120, null =True)
+    last_scheduled = models.DateTimeField(default=datetime.fromtimestamp(0, tz=pytz.UTC))
+    schedule_initial_run = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
@@ -843,30 +858,6 @@ class Client(models.Model):
     class Meta:
         get_latest_by = 'last_seen'
 
-@python_2_unicode_compatible
-class OSVersion(models.Model):
-    """
-    The name and version of the operating system while a job is running.
-    """
-    name = models.CharField(max_length=120)
-    version = models.CharField(max_length=120)
-    other = models.CharField(max_length=120, blank=True)
-    created = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return "%s %s" % (self.name, self.version)
-
-@python_2_unicode_compatible
-class LoadedModule(models.Model):
-    """
-    A module loaded while a job is running
-    """
-    name = models.CharField(max_length=120)
-    created = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return self.name
-
 def humanize_bytes(num):
     for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
         if abs(num) < 1024.0:
@@ -888,9 +879,6 @@ class Job(models.Model):
     ready = models.BooleanField(default=False) # ready means that the job can go out for execution.
     active = models.BooleanField(default=True)
     config = models.ForeignKey(BuildConfig, related_name='jobs', on_delete=models.CASCADE)
-    loaded_modules = models.ManyToManyField(LoadedModule, blank=True)
-    operating_system = models.ForeignKey(OSVersion, null=True, blank=True, related_name='jobs',
-            on_delete=models.CASCADE)
     status = models.IntegerField(choices=JobStatus.STATUS_CHOICES, default=JobStatus.NOT_STARTED)
     seconds = models.DurationField(default=timedelta)
     # the sha of civet_recipes for the scripts in this job
@@ -900,6 +888,7 @@ class Job(models.Model):
     running_step = models.CharField(max_length=120, blank=True)
     last_modified = models.DateTimeField(auto_now=True)
     created = models.DateTimeField(auto_now_add=True)
+    prioritized = models.DateTimeField(null=True, blank=True, default=None)
 
     class Meta:
         ordering = ["-last_modified"]
@@ -1003,12 +992,21 @@ class Job(models.Model):
         if old_recipe.jobs.count() == 0:
             old_recipe.delete()
 
+    def set_prioritized(self, message):
+        """
+        Prioritizes the job and updates the event status.
+        """
+        logger.info(f'Prioritizing:{self}:{self.pk}: {message}')
+        self.prioritized = make_aware(datetime.now())
+        JobChangeLog.objects.create(job=self, message=message)
+        self.save()
+
     def init_pr_status(self):
         """
         Updates the PR status to the "Pending" state
         """
         git_api = self.event.build_user.api()
-        git_api.update_pr_status(self.event.base,
+        git_api.update_status(self.event.base,
                         self.event.head,
                         git_api.PENDING,
                         self.absolute_url(),
@@ -1173,6 +1171,8 @@ def complete_status(status):
         return JobStatus.CANCELED
     if JobStatus.INTERMITTENT_FAILURE in status:
         return JobStatus.INTERMITTENT_FAILURE
+    if JobStatus.SKIPPED in status:
+        return JobStatus.SKIPPED
     if JobStatus.FAILED_OK in status:
         return JobStatus.FAILED_OK
     if JobStatus.SUCCESS in status:
@@ -1196,4 +1196,3 @@ class RepositoryBadge(models.Model):
 
     def __str__(self):
         return "%s:%s" % (self.repository, self.name)
-

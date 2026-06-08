@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,208 +37,91 @@ class Tests(ClientTester.ClientTester):
         ip = views.get_client_ip(request)
         self.assertEqual('2.2.2.2', ip)
 
-    def test_ready_jobs_client(self):
+    def test_get_jobs_cancel(self):
         user = utils.get_test_user()
         client = utils.create_client()
         request = self.factory.get('/')
         client_ip = views.get_client_ip(request)
         client.ip = client_ip
         client.save()
-        url = reverse('ci:client:ready_jobs', args=[user.build_key, client.name])
+        url = reverse('ci:client:get_job')
         r0 = utils.create_recipe(name='recipe0', user=user)
         r1 = utils.create_recipe(name='recipe1', user=user)
         j0 = utils.create_job(user=user, recipe=r0)
         j1 = utils.create_job(user=user, recipe=r1)
-        utils.update_job(j0, ready=True, complete=False, status=models.JobStatus.RUNNING, client=client)
+        utils.update_job(j0, ready=True, active=True, status=models.JobStatus.NOT_STARTED)
         utils.update_job(j1, ready=True, active=True, status=models.JobStatus.NOT_STARTED)
-        # we have a client trying to get ready jobs but
-        # there is a job that is in the RUNNING state
-        # associated with that client. That must mean
-        # that the client previously stopped without letting the
-        # server know, so the previous job should get
-        # canceled
+
+        # get the first job
+        post_data = {'client_name': client.name,
+                     'build_keys': [user.build_key],
+                     'build_configs': [j0.config.name]}
         self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts(canceled=1, num_jobs_completed=1, num_changelog=1, active_branches=1)
+        response = self.client_post_json(url, post_data)
         self.assertEqual(response.status_code, 200)
+        self.compare_counts(active_branches=1)
+        data = response.json()
+        self.assertEqual(data['job_id'], j0.pk)
+        self.assertEqual(data['status'], 'OK')
+
+        # get the second job
+        post_data = {'client_name': client.name,
+                     'build_keys': [user.build_key],
+                     'build_configs': [j1.config.name]}
+        self.set_counts()
+        response = self.client_post_json(url, post_data)
+        self.assertEqual(response.status_code, 200)
+        self.compare_counts(canceled=1, num_changelog=1, num_jobs_completed=1)
+        data = response.json()
+        self.assertEqual(data['job_id'], j1.pk)
+        self.assertEqual(data['status'], 'OK')
+
+        # first job should be cancelled
         j0.refresh_from_db()
         self.assertEqual(j0.status, models.JobStatus.CANCELED)
 
-        # if all jobs are in running, the event should be canceled
-        utils.update_job(j0, complete=False, status=models.JobStatus.RUNNING)
-        utils.update_job(j1, complete=False, status=models.JobStatus.RUNNING, client=client)
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts(canceled=2, num_jobs_completed=2, num_changelog=2, events_canceled=1, num_events_completed=1)
-        self.assertEqual(response.status_code, 200)
-        j0.refresh_from_db()
-        self.assertEqual(j0.status, models.JobStatus.CANCELED)
-        j1.refresh_from_db()
-        self.assertEqual(j1.status, models.JobStatus.CANCELED)
-
-        # Try again, nothing should change
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 200)
-
-    def test_ready_jobs(self):
-        url = reverse('ci:client:ready_jobs', args=['123', 'client'])
-        # only get allowed
-        self.set_counts()
-        response = self.client.post(url)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 405) # not allowed
-        self.compare_counts()
-
-        # valid request, but no user with build key, so no jobs
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts(num_clients=1)
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn('jobs', data)
-        self.assertEqual(len(data['jobs']), 0)
-
+    def test_get_job_order(self):
         user = utils.get_test_user()
-        job = utils.create_job(user=user)
-        job.ready = True
-        job.active = True
-        job.save()
-        r2 = utils.create_recipe(name='recipe2', user=user)
-        r3 = utils.create_recipe(name='recipe3', user=user)
-        r4 = utils.create_recipe(name='recipe4', user=user)
-        job2 = utils.create_job(recipe=r2, user=user)
-        job3 = utils.create_job(recipe=r3, user=user)
-        job4 = utils.create_job(recipe=r4, user=user)
-        utils.update_job(job2, ready=True, active=True)
-        utils.update_job(job3, ready=True, active=True)
-        utils.update_job(job4, ready=True, active=True)
-        r2.priority = 10
-        r2.save()
-        r3.priority = 5
-        r3.save()
-        job.recipe.priority = 1
-        job.recipe.save()
-        r4.priority = 1
-        r4.save()
+        jobs = []
+        clients = []
+        for i in range(6):
+            recipe = utils.create_recipe(name=f'recipe{i}', user=user)
+            job = utils.create_job(recipe=recipe, user=user)
+            jobs.append(job)
+            utils.update_job(job, ready=True, active=True)
+            client = utils.create_client(name=f'client{i}')
+            clients.append(client)
+        jobs[0].recipe.priority = 1
+        jobs[0].recipe.save()
+        jobs[1].recipe.priority = 10
+        jobs[1].recipe.save()
+        jobs[2].recipe.priority = 5
+        jobs[2].recipe.save()
+        jobs[3].recipe.priority = 1
+        jobs[3].recipe.save()
+        jobs[4].recipe.priority = 1
+        jobs[5].recipe.priority = 1
+        jobs[4].set_prioritized('foo')
+        jobs[5].set_prioritized('foo')
 
-        # valid request with a ready job
-        url = reverse('ci:client:ready_jobs', args=[user.build_key, 'client'])
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn('jobs', data)
-        self.assertEqual(len(data['jobs']), 4)
-        self.assertEqual(data['jobs'][0]['id'], job2.pk)
-        self.assertEqual(data['jobs'][1]['id'], job3.pk)
-        # two jobs with the same priorty, the one created first should run first
-        self.assertEqual(data['jobs'][2]['id'], job.pk)
-        self.assertEqual(data['jobs'][3]['id'], job4.pk)
+        # the order we expect to run jobs in
+        expected_jobs = [jobs[5], jobs[4], jobs[1], jobs[2], jobs[0], jobs[3]]
 
-        # Test to see if client_runner_user is working
-        # The original user should now only have 3 jobs
-        # and the new user that is the client_runner_user
-        # should have 1
-        other_user = utils.create_user("other_user")
-        r4.client_runner_user = other_user
-        r4.save()
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn('jobs', data)
-        self.assertEqual(len(data['jobs']), 3)
-
-        url = reverse('ci:client:ready_jobs', args=[other_user.build_key, 'client'])
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn('jobs', data)
-        self.assertEqual(len(data['jobs']), 1)
-
-    def test_ready_jobs_with_current_event(self):
-        """
-        If a branch is specified with "auto_cancel_push_events_except_current" then
-        jobs on the "current" event get priority over subsequent events. Basically
-        the normal sort of (-priority, created) gets changed to (created, -priority)
-        for those jobs.
-        """
-        user = utils.get_test_user()
-        r0 = utils.create_recipe(name='recipe0', user=user)
-        r0.priority = 30
-        r0.save()
-        r1 = utils.create_recipe(name='recipe1', user=user)
-        r1.priority = 20
-        r1.save()
-        r2 = utils.create_recipe(name='recipe2', user=user)
-        r2.priority = 10
-        r2.save()
-        e0 = utils.create_event(user=user, cause=models.Event.PUSH)
-        j0 = utils.create_job(recipe=r0, event=e0, user=user)
-        j1 = utils.create_job(recipe=r1, event=e0, user=user)
-        j2 = utils.create_job(recipe=r2, event=e0, user=user)
-        e1 = utils.create_event(user=user, cause=models.Event.PUSH, commit1='12345')
-        j3 = utils.create_job(recipe=r0, event=e1, user=user)
-        j4 = utils.create_job(recipe=r1, event=e1, user=user)
-        j5 = utils.create_job(recipe=r2, event=e1, user=user)
-
-        for j in models.Job.objects.all():
-            j.active = True
-            j.ready = True
-            j.save()
-
-        url = reverse('ci:client:ready_jobs', args=[user.build_key, 'client'])
-        self.set_counts()
-        response = self.client.get(url)
-        self.compare_counts(num_clients=1)
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn('jobs', data)
-        jobs = data["jobs"]
-        self.assertEqual(len(jobs), 6)
-        # Normally jobs are sorted by (-priority, created)
-        self.assertEqual(jobs[0]["id"], j0.pk)
-        self.assertEqual(jobs[1]["id"], j3.pk)
-        self.assertEqual(jobs[2]["id"], j1.pk)
-        self.assertEqual(jobs[3]["id"], j4.pk)
-        self.assertEqual(jobs[4]["id"], j2.pk)
-        self.assertEqual(jobs[5]["id"], j5.pk)
-
-        repo_name = "%s/%s" % (e0.base.branch.repository.user.name, e0.base.branch.repository.name)
-        branch_name = e0.base.branch.name
-        repo_settings={repo_name: {"branch_settings": {branch_name: {"auto_cancel_push_events_except_current": True}}}}
-        with self.settings(INSTALLED_GITSERVERS=[utils.github_config(repo_settings=repo_settings)]):
-            response = self.client.get(url)
-            self.compare_counts(num_clients=1)
+        for i in range(4):
+            url = reverse('ci:client:get_job')
+            post_data = {'client_name': clients[i].name,
+                         'build_keys': [user.build_key],
+                         'build_configs': [jobs[i].config.name]}
+            response = self.client_post_json(url, post_data)
             self.assertEqual(response.status_code, 200)
             data = response.json()
-            self.assertIn('jobs', data)
-            jobs = data["jobs"]
-            self.assertEqual(len(jobs), 6)
-            # Jobs now are (created, -priority)
-            self.assertEqual(jobs[0]["id"], j0.pk)
-            self.assertEqual(jobs[1]["id"], j1.pk)
-            self.assertEqual(jobs[2]["id"], j2.pk)
-            self.assertEqual(jobs[3]["id"], j3.pk)
-            self.assertEqual(jobs[4]["id"], j4.pk)
-            self.assertEqual(jobs[5]["id"], j5.pk)
-
-    def test_ready_jobs_html(self):
-        # This is a debug function, so just get some coverage
-        url = reverse('ci:client:ready_jobs_html', args=['123', 'client'])
-        self.client.get(url)
+            self.assertEqual(data['job_id'], expected_jobs[i].pk)
 
     def json_post_request(self, data):
         jdata = json.dumps(data)
         return self.factory.post('/', jdata, content_type='application/json')
 
-    def client_post_json(self, url, data):
+    def client_post_json(self, url, data, client=None):
         jdata = json.dumps(data)
         return self.client.post(url, jdata, content_type='application/json')
 
@@ -300,10 +183,12 @@ class Tests(ClientTester.ClientTester):
             self.assertIn('prestep_sources', data)
             self.assertIn('steps', data)
 
-    def test_claim_job(self):
-        post_data = {'job_id': 0}
+    def test_get_job(self):
         user = utils.get_test_user()
-        url = reverse('ci:client:claim_job', args=[user.build_key, 'testconfig', 'testClient'])
+        url = reverse('ci:client:get_job')
+
+        post_data = {'client_name': 'testClient',
+                     'build_keys': [user.build_key]}
 
         # only post allowed
         self.set_counts()
@@ -323,36 +208,20 @@ class Tests(ClientTester.ClientTester):
         job_id = job.pk
         job.save()
 
-        # bad config
-        post_data = {'job_id': job_id}
-        self.set_counts()
-        response = self.client_post_json(url, post_data)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 400) # bad request
-
-        # config different than job
-        utils.create_build_config(name="otherBuildConfig")
-        config2 = models.BuildConfig.objects.exclude(pk=job.config.pk).first()
-        url = reverse('ci:client:claim_job', args=[user.build_key, config2.name, 'testClient'])
-        post_data = {'job_id': job_id}
-        self.set_counts()
-        response = self.client_post_json(url, post_data)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 400) # bad request
-
-        # bad job
-        url = reverse('ci:client:claim_job', args=[user.build_key, job.config.name, 'testClient'])
-        post_data = {'job_id': 0}
-        self.set_counts()
-        response = self.client_post_json(url, post_data)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 400) # bad request
-
-        # valid job, should be ok
-        post_data = {'job_id': job_id}
+        # config does not exist, nothing there
+        post_data['build_configs'] = ['testconfig']
         self.set_counts()
         response = self.client_post_json(url, post_data)
         self.compare_counts(num_clients=1)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['job_id'], None)
+
+        # valid job, should be ok
+        post_data['build_configs'] = [job.config.name]
+        self.set_counts()
+        response = self.client_post_json(url, post_data)
+        self.compare_counts()
         self.assertEqual(response.status_code, 200)
 
         data = response.json()
@@ -402,7 +271,7 @@ class Tests(ClientTester.ClientTester):
         # there is a newer event so this event doesn't update the PullRequest status
         self.assertEqual(job.event.pull_request.status, models.JobStatus.SUCCESS)
 
-        # valid job, but wrong client
+        # valid job, another client
         job.invalidated = True
         job.same_client = True
         job.status = models.JobStatus.NOT_STARTED
@@ -410,39 +279,32 @@ class Tests(ClientTester.ClientTester):
         job.client = client
         job.save()
 
-        self.set_counts()
-        response = self.client_post_json(url, post_data)
-        self.compare_counts()
-        self.assertEqual(response.status_code, 400)
-
-        # valid job, and correct client
-        url = reverse('ci:client:claim_job', args=[user.build_key, job.config.name, client.name])
+        # pull from previous client, should get other job
         self.set_counts()
         response = self.client_post_json(url, post_data)
         self.compare_counts()
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data['job_id'], job_id)
+        self.assertEqual(data['job_id'], job2.pk)
         self.assertEqual(data['status'], 'OK')
 
-        # valid job, and job client was null, should go through
-        job.client = None
-        job.save()
-        url = reverse('ci:client:claim_job', args=[user.build_key, job.config.name, 'new_client'])
+        # pull from old_client, should get first job
+        post_data['client_name'] = client.name
         self.set_counts()
         response = self.client_post_json(url, post_data)
-        self.compare_counts(num_clients=1)
+        self.compare_counts()
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data['job_id'], job_id)
+        self.assertEqual(data['job_id'], job.pk)
         self.assertEqual(data['status'], 'OK')
-        job.refresh_from_db()
-        job.event.refresh_from_db()
-        job.event.pull_request.refresh_from_db()
-        self.assertEqual(job.status, models.JobStatus.RUNNING)
-        self.assertEqual(job.event.status, models.JobStatus.RUNNING)
-        # there is a newer event so this event doesn't update the PullRequest status
-        self.assertEqual(job.event.pull_request.status, models.JobStatus.SUCCESS)
+
+        # both jobs should be running
+        for j in [job, job2]:
+            j.refresh_from_db()
+            j.event.refresh_from_db()
+            j.event.pull_request.refresh_from_db()
+            self.assertEqual(j.status, models.JobStatus.RUNNING)
+            self.assertEqual(j.event.status, models.JobStatus.RUNNING)
 
     def test_job_finished_status(self):
         user = utils.get_test_user()
@@ -473,13 +335,9 @@ class Tests(ClientTester.ClientTester):
             self.compare_counts(num_events_completed=1, num_jobs_completed=1)
             self.assertEqual(response.status_code, 200)
             self.assertTrue(mock_api.called)
-            self.assertTrue(mock_api.return_value.update_pr_status.called)
+            self.assertTrue(mock_api.return_value.update_status.called)
             job.refresh_from_db()
             self.assertEqual(job.status, models.JobStatus.FAILED_OK)
-            os_obj = models.OSVersion.objects.get(name="Other")
-            self.assertEqual(job.operating_system.pk, os_obj.pk)
-            self.assertEqual(job.loaded_modules.count(), 1)
-            self.assertEqual(job.loaded_modules.first().name, "None")
 
         # A step FAILED
         # So final status is FAILED and we update the PR
@@ -491,7 +349,7 @@ class Tests(ClientTester.ClientTester):
             self.compare_counts()
             self.assertEqual(response.status_code, 200)
             self.assertTrue(mock_api.called)
-            self.assertTrue(mock_api.return_value.update_pr_status.called)
+            self.assertTrue(mock_api.return_value.update_status.called)
             job.refresh_from_db()
             self.assertEqual(job.status, models.JobStatus.FAILED)
 
@@ -506,7 +364,7 @@ class Tests(ClientTester.ClientTester):
             self.compare_counts()
             self.assertEqual(response.status_code, 200)
             self.assertTrue(mock_api.called)
-            self.assertTrue(mock_api.return_value.update_pr_status.called)
+            self.assertTrue(mock_api.return_value.update_status.called)
             job.refresh_from_db()
             self.assertEqual(job.status, models.JobStatus.SUCCESS)
 
@@ -521,7 +379,7 @@ class Tests(ClientTester.ClientTester):
             self.compare_counts()
             self.assertEqual(response.status_code, 200)
             self.assertTrue(mock_api.called)
-            self.assertTrue(mock_api.return_value.update_pr_status.called)
+            self.assertTrue(mock_api.return_value.update_status.called)
             job.refresh_from_db()
             self.assertEqual(job.status, models.JobStatus.FAILED)
 
@@ -579,18 +437,6 @@ class Tests(ClientTester.ClientTester):
         self.assertEqual(data['status'], 'OK')
         job.refresh_from_db()
         self.assertTrue(job.complete)
-        self.assertEqual(job.operating_system.name, "Ubuntu")
-        self.assertEqual(job.operating_system.version, "14.04")
-        self.assertEqual(job.operating_system.other, "trusty")
-        self.check_modules(job, [ 'moose/.gcc_4.9.1',
-            'moose/.tbb',
-            'moose/.mpich-3.1.2_gcc',
-            'moose/.mpich_petsc-3.6.3-gcc-superlu',
-            'moose-tools',
-            'moose/.ccache',
-            'moose/.vtk-6',
-            'moose-dev-gcc',
-            ])
 
         job2 = utils.create_job(event=job.event)
         job2.ready = False
@@ -610,7 +456,7 @@ class Tests(ClientTester.ClientTester):
         job2 = models.Job.objects.get(pk=job2.pk)
         self.assertTrue(job2.ready)
 
-    @patch.object(GitHubAPI, 'update_pr_status')
+    @patch.object(GitHubAPI, 'update_status')
     def test_job_finished_unrunnable(self, mock_status):
         user = utils.get_test_user()
         r0 = utils.create_recipe(name='recipe0', user=user)

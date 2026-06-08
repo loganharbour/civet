@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -74,7 +74,9 @@ def process_pull_request(user, data):
         pr_event.action = PullRequestEvent.PullRequestEvent.CLOSED
     elif action == 'reopened':
         pr_event.action = PullRequestEvent.PullRequestEvent.REOPENED
-    elif action in ['labeled', 'unlabeled', 'assigned', 'unassigned', 'review_requested', 'review_request_removed', 'edited']:
+    elif action in ['labeled', 'unlabeled', 'assigned', 'unassigned', 'review_requested',
+                    'review_request_removed', 'edited', 'auto_merge_enabled', 'ready_for_review',
+                    'converted_to_draft', 'auto_merge_disabled', 'locked']:
         # actions that we don't support. "edited" is not supported if the PR is closed.
         logger.info('Ignoring github action "{}" on PR: #{}: {}'.format(action, data['number'], pr_data['title']))
         return None

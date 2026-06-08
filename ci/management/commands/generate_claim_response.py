@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -58,8 +58,6 @@ class Command(BaseCommand):
                 data = json.loads(reply.content)
                 data["job_id"] = 1
                 data["job_info"]["job_id"] = 1
-                data["job_info"]["environment"]["job_id"] = 1
-                data["job_info"]["environment"]["recipe_id"] = 1
                 data["job_info"]["environment"]["CIVET_JOB_ID"] = 1
                 data["job_info"]["environment"]["CIVET_RECIPE_ID"] = 1
                 self.stdout.write("Writing: %s" % fname)

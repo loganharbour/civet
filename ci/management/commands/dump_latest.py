@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -60,8 +60,6 @@ class Command(BaseCommand):
             self.add_obj(j, collected)
             self.add_obj(j.client, collected)
             self.add_obj(j.config, collected)
-            self.add_obj(j.operating_system, collected)
-            self.add_query(j.loaded_modules, collected)
             self.add_obj(j.recipe, collected)
             self.add_query(j.recipe.depends_on, collected)
             self.add_query(j.recipe.environment_vars, collected)

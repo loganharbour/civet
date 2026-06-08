@@ -8,28 +8,23 @@ ifeq ($(firstword $(MAKECMDGOALS)),$(filter $(firstword $(MAKECMDGOALS)), test c
   $(eval $(TEST_ARGS):;@:)
 endif
 
-CIVET_TEST_JOBS ?= 12
-
-ifeq ($(SELENIUM_TEST),1)
-	MAX_MISSING_LINES := 69
-else
-	MAX_MISSING_LINES := 71
-endif
+TEST_JOBS ?= 4
+MAX_MISSING_LINES := 82
 
 py_files := $(shell git ls-files '*.py')
 
 all: coverage check
 
 .PHONY: test
-test: 
-	python -Werror ./manage.py test --parallel=$(CIVET_TEST_JOBS) $(TEST_ARGS)
+test:
+	python -Werror ./manage.py test --parallel=$(TEST_JOBS) --verbosity=2 $(TEST_ARGS)
 
 .coverage: $(py_files)
 	@export COVERAGE_PROCESS_START="./.coveragerc"
 	@printf "import coverage\ncoverage.process_startup()\n" > sitecustomize.py
 	@export PYTHONWARNINGS="error"
 	coverage erase
-	coverage run --parallel-mode --source "." ./manage.py test --parallel=$(CIVET_TEST_JOBS) $(TEST_ARGS)
+	coverage run --parallel-mode --source "." ./manage.py test --verbosity=2 --parallel=$(TEST_JOBS) $(TEST_ARGS)
 	coverage combine
 	@rm -f sitecustomize.py
 

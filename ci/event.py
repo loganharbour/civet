@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ def cancel_event(ev, message, update_remote=False, do_pr_status_update=True):
 
     if update_remote:
         for job in cancelled_jobs:
-            UpdateRemoteStatus.job_complete_pr_status(job, do_pr_status_update)
+            UpdateRemoteStatus.job_complete_status(job, do_pr_status_update)
         UpdateRemoteStatus.event_complete(ev)
 
 def get_active_labels(repo, changed_files):

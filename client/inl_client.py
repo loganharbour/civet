@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,11 +15,13 @@
 # limitations under the License.
 
 from __future__ import unicode_literals, absolute_import
-import os, sys, argparse
+import os, sys, argparse, pwd
 # Need to add parent directory to the path so that imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import socket
-from client import INLClient
+import platform
+import logging, logging.handlers
+from client import INLClient, BaseClient
 from DaemonLite import DaemonLite
 
 def commandline_client(args):
@@ -30,39 +32,120 @@ def commandline_client(args):
             choices=['start', 'stop', 'restart', 'none'],
             help="Start a UNIX daemon.",
             required=True)
+    parser.add_argument("--configs",
+            dest='configs',
+            nargs='+',
+            help="The configurations this client supports (eg 'linux-gnu')")
+    parser.add_argument("--env",
+            dest='env',
+            nargs=2,
+            action='append',
+            help="Sets a client environment variable (example: VAR_NAME VALUE)")
+    parser.add_argument("--build-root",
+            type=str,
+            dest='build_root',
+            help="Sets the build root")
+    parser.add_argument("--user-client-suffix",
+            action='store_true',
+            dest='user_client_suffix',
+            help='Adds the user to client name as a suffix, i.e, sets the name to <hostname>_<user>_<client number>')
+    parser.add_argument('--poll-time',
+            type=int,
+            dest='poll_time',
+            help='Sets the client polling time in seconds (default: 60s)',
+            default=60)
+    parser.add_argument('--startup-command',
+                        type=str,
+                        dest='startup_command',
+                        help='A command to run on startup')
+    parser.add_argument('--pre-job-command',
+                        type=str,
+                        dest='pre_job_command',
+                        help='A command to run before a job')
+    parser.add_argument('--pre-step-command',
+                        type=str,
+                        dest='pre_step_command',
+                        help='A command to run before a step')
+    parser.add_argument('--post-job-command',
+                        type=str,
+                        dest='post_job_command',
+                        help='A command to run after a job')
+    parser.add_argument('--post-step-command',
+                        type=str,
+                        dest='post_step_command',
+                        help='A command to run after a step')
+    parser.add_argument('--exit-command',
+                        type=str,
+                        dest='exit_command',
+                        help='A command to run on client exit')
 
     parsed = parser.parse_args(args)
     home = os.environ.get("CIVET_HOME", os.path.join(os.environ["HOME"], "civet"))
-    build_root = '{}/build_{}'.format(home, parsed.client)
-    # The only place the client uses BUILD_ROOT is in JobRunner, which replaces environment
-    # variables values that start with BUILD_ROOT with this value.
-    os.environ['BUILD_ROOT'] = build_root
 
     log_dir = '{}/logs'.format(home)
-    client_name = '{}_{}'.format(socket.gethostname(), parsed.client)
+    client_name = socket.gethostname()
+    if parsed.user_client_suffix:
+        client_name += '_{}'.format(pwd.getpwuid(os.getuid())[0])
+    client_name += '_{}'.format(parsed.client)
     client_info = {"url": "",
         "client_name": client_name,
         "server": "",
         "servers": [],
-        "configs": [],
         "ssl_verify": False,
         "ssl_cert": "",
         "log_file": "",
         "log_dir": log_dir,
-        "build_key": "",
+        "build_keys": [],
         "single_shot": False,
-        "poll": 30,
+        "poll": parsed.poll_time,
         "daemon_cmd": parsed.daemon,
         "request_timeout": 120,
-        "update_step_time": 20,
+        "update_step_time": 30,
         "server_update_timeout": 5,
         # This needs to be bigger than update_step_time so that
         # the ping message doesn't become the default message
-        "server_update_interval": 40,
+        "server_update_interval": 50,
         "max_output_size": 5*1024*1024,
-        }
+        "startup_command": parsed.startup_command,
+        "pre_job_command": parsed.pre_job_command,
+        "pre_step_command": parsed.pre_step_command,
+        "post_job_command": parsed.post_job_command,
+        "post_step_command": parsed.post_step_command,
+        "exit_command": parsed.exit_command
+    }
 
     c = INLClient.INLClient(client_info)
+
+    # Add a syslog logger
+    if platform.system() != 'Windows':
+        log_device = '/dev/log' if platform.system() == 'Linux' else '/var/run/syslog'
+        syslog_tag = client_name.replace(socket.gethostname() + '_', '')
+        syslog_handler = logging.handlers.SysLogHandler(log_device)
+        syslog_formatter = logging.Formatter(syslog_tag + ': %(message)s')
+        syslog_handler.setFormatter(syslog_formatter)
+        syslog_handler.setLevel(logging.INFO)
+        logger = logging.getLogger("civet_client")
+        logger.addHandler(syslog_handler)
+
+    if parsed.daemon == 'start' or parsed.daemon == 'restart' or platform.system() == "Windows":
+        if not parsed.configs:
+            raise BaseClient.ClientException('--configs must be provided')
+
+        if parsed.build_root:
+            build_root = parsed.build_root
+        else:
+            build_root = '{}/build_{}'.format(home, parsed.client)
+
+        for config in parsed.configs:
+            c.add_config(config)
+
+        c.set_environment('BUILD_ROOT', build_root)
+        c.set_environment('CIVET_HOME', home)
+        c.set_environment('CIVET_CLIENT_NUMBER', parsed.client)
+        if parsed.env:
+            for var, value in parsed.env:
+                c.set_environment(var, value)
+
     return c, parsed.daemon
 
 class ClientDaemon(DaemonLite):

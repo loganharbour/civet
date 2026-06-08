@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -142,6 +142,12 @@ class GitLabAPI(GitAPI):
             owner_repo.sort()
         return owner_repo
 
+    @copydoc(GitAPI.can_view_repo)
+    def can_view_repo(self, owner, name):
+        url = self._repo_url(f'{owner}/{name}')
+        response = self.get(url)
+        return response is not None and not self._bad_response
+
     @copydoc(GitAPI.get_repos)
     def get_repos(self, session):
         if self._repos_key in session:
@@ -189,8 +195,8 @@ class GitLabAPI(GitAPI):
                 return status_pair[1]
         return None
 
-    @copydoc(GitAPI.update_pr_status)
-    def update_pr_status(self, base, head, state, event_url, description, context, job_stage):
+    @copydoc(GitAPI.update_status)
+    def update_status(self, base, head, state, event_url, description, context, job_stage):
         """
         This updates the status of a paritcular commit associated with a PR.
         """
@@ -221,7 +227,7 @@ class GitLabAPI(GitAPI):
             logger.warning("Error setting pr status %s\nSent data:\n%s\nReply:\n%s" % \
                     (url, self._format_json(data), self._format_json(response.json())))
         elif not self._bad_response:
-            logger.info("Set pr status %s:\nSent Data:\n%s" % (url, self._format_json(data)))
+            logger.info("Set status %s:\nSent Data:\n%s" % (url, self._format_json(data)))
 
     def _is_group_member(self, group_id, username):
         """
@@ -473,8 +479,7 @@ class GitLabAPI(GitAPI):
 
     @copydoc(GitAPI.create_or_update_issue)
     def create_or_update_issue(self, owner, repo, title, body, new_comment):
-        # Mangle owner/repo for gitlab.api private methods (API change in GitLab 12.x)
-        path_with_namespace = urljoin(owner, repo)
+        path_with_namespace = '%s/%s' % (owner, repo)
         if not self._update_remote:
             return
         existing_issues = self._get_issues(path_with_namespace, title)

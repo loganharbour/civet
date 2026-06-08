@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,15 +28,16 @@ from client.tests import LiveClientTester, utils
 class Tests(LiveClientTester.LiveClientTester):
     def create_client_and_job(self, recipe_dir, name, sleep=1):
         c = utils.create_base_client()
-        os.environ["BUILD_ROOT"] = "/foo/bar"
+        c.set_environment('BUILD_ROOT', '/foo/bar')
         c.client_info["single_shot"] = True
         c.client_info["update_step_time"] = 1
         c.client_info["ssl_cert"] = False # not needed but will get another line of coverage
         c.client_info["server"] = self.live_server_url
         c.client_info["servers"] = [self.live_server_url]
         job = utils.create_client_job(recipe_dir, name=name, sleep=sleep)
-        c.client_info["build_configs"] = [job.config.name]
-        c.client_info["build_key"] = job.recipe.build_user.build_key
+        if job.config.name not in c.get_client_info("build_configs"):
+            c.add_config(job.config.name)
+        c.client_info["build_keys"] = [job.recipe.build_user.build_key]
         return c, job
 
     def test_no_signals(self):
@@ -55,7 +56,8 @@ class Tests(LiveClientTester.LiveClientTester):
             self.set_counts()
             c.run()
             self.compare_counts(num_clients=1, num_events_completed=1, num_jobs_completed=1, active_branches=1)
-            utils.check_complete_job(self, job)
+            utils.check_complete_job(self, job, c)
+            self.assertFalse(c.runner_killed)
 
     def test_run_graceful(self):
         with test_utils.RecipeDir() as recipe_dir:
@@ -69,9 +71,10 @@ class Tests(LiveClientTester.LiveClientTester):
             c.run()
             proc.wait()
             self.compare_counts(num_clients=1, num_events_completed=1, num_jobs_completed=1, active_branches=1)
-            utils.check_complete_job(self, job)
+            utils.check_complete_job(self, job, c)
             self.assertEqual(c.graceful_signal.triggered, True)
             self.assertEqual(c.cancel_signal.triggered, False)
+            self.assertFalse(c.runner_killed)
 
     def test_run_cancel(self):
         with test_utils.RecipeDir() as recipe_dir:
@@ -93,7 +96,8 @@ class Tests(LiveClientTester.LiveClientTester):
                     )
             self.assertEqual(c.cancel_signal.triggered, True)
             self.assertEqual(c.graceful_signal.triggered, False)
-            utils.check_canceled_job(self, job)
+            self.assertTrue(c.runner_killed)
+            utils.check_canceled_job(self, job, c)
 
     def test_run_job_cancel(self):
         with test_utils.RecipeDir() as recipe_dir:
@@ -115,7 +119,8 @@ class Tests(LiveClientTester.LiveClientTester):
                     )
             self.assertEqual(c.cancel_signal.triggered, False)
             self.assertEqual(c.graceful_signal.triggered, False)
-            utils.check_canceled_job(self, job)
+            self.assertTrue(c.runner_killed)
+            utils.check_canceled_job(self, job, c)
 
     def test_run_job_invalidated_basic(self):
         with test_utils.RecipeDir() as recipe_dir:
@@ -133,6 +138,7 @@ class Tests(LiveClientTester.LiveClientTester):
             self.assertGreater(15, end_time-start_time)
             self.compare_counts(invalidated=1, num_clients=1, num_changelog=1)
             utils.check_stopped_job(self, job)
+            self.assertTrue(c.runner_killed)
 
     def test_run_job_invalidated_nested_bash(self):
         with test_utils.RecipeDir() as recipe_dir:
@@ -152,8 +158,9 @@ class Tests(LiveClientTester.LiveClientTester):
             self.assertGreater(15, end_time-start_time)
             self.compare_counts(num_clients=1, invalidated=1, num_changelog=1)
             utils.check_stopped_job(self, job)
+            self.assertTrue(c.runner_killed)
 
-    @patch.object(JobGetter.JobGetter, 'find_job')
+    @patch.object(JobGetter.JobGetter, 'get_job')
     def test_exception(self, mock_getter):
         with test_utils.RecipeDir() as recipe_dir:
             # check exception handler
@@ -163,7 +170,7 @@ class Tests(LiveClientTester.LiveClientTester):
             c.run()
             self.compare_counts()
 
-    @patch.object(JobGetter.JobGetter, 'find_job')
+    @patch.object(JobGetter.JobGetter, 'get_job')
     def test_runner_error(self, mock_getter):
         with test_utils.RecipeDir() as recipe_dir:
             mock_getter.return_value = None
@@ -180,5 +187,4 @@ class Tests(LiveClientTester.LiveClientTester):
             self.set_counts()
             c.run()
             self.compare_counts(num_clients=1, num_events_completed=1, num_jobs_completed=1, active_branches=1)
-            utils.check_complete_job(self, job)
-
+            utils.check_complete_job(self, job, c)

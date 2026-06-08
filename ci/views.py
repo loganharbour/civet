@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,11 +29,16 @@ import time
 import tarfile
 from io import BytesIO
 from ci import RepositoryStatus, EventsStatus, Permissions, PullRequestEvent, ManualEvent, TimeUtils
+from ci.client.ReadyJobs import get_ready_jobs
 from django.utils.html import escape
 from django.utils.text import get_valid_filename
 from django.views.decorators.cache import never_cache
 from ci.client import UpdateRemoteStatus
 import os, re
+from datetime import datetime
+from croniter import croniter
+import pytz
+from collections import defaultdict
 
 import logging, traceback
 logger = logging.getLogger('ci')
@@ -54,6 +59,7 @@ def get_user_repos_info(request, limit=30, last_modified=None):
         evs_info: list of dicts of event information
         default: Whether the default view was enforced
     """
+    viewable_repos = Permissions.viewable_repos(request.session)
     pks = []
     default = request.GET.get('default')
     if default is None:
@@ -67,7 +73,8 @@ def get_user_repos_info(request, limit=30, last_modified=None):
                 continue
             user = gitserver.signed_in_user(request.session)
             if user != None:
-                for repo in user.preferred_repos.filter(user__server=gitserver).all():
+                repos = user.preferred_repos.filter(user__server=gitserver, id__in=viewable_repos)
+                for repo in repos.all():
                     pks.append(repo.pk)
     else:
         default = True
@@ -75,14 +82,35 @@ def get_user_repos_info(request, limit=30, last_modified=None):
         repos = RepositoryStatus.filter_repos_status(pks, last_modified=last_modified)
         evs_info = EventsStatus.events_filter_by_repo(pks, limit=limit, last_modified=last_modified)
     else:
-        repos = RepositoryStatus.main_repos_status(last_modified=last_modified)
-        evs_info = EventsStatus.all_events_info(limit=limit, last_modified=last_modified)
+        repos = RepositoryStatus.main_repos_status(last_modified=last_modified, filter_repo_ids=viewable_repos)
+        evs_info = EventsStatus.all_events_info(limit=limit, last_modified=last_modified, filter_repo_ids=viewable_repos)
+
     return repos, evs_info, default
 
 def sorted_clients(client_q):
     clients = [ c for c in client_q.all() ]
     clients.sort(key=lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s.name)])
     return clients
+
+def render_unauthorized_repo(request, repo):
+    """
+    Helper for rendering an unauthorized repo, if any.
+    Input:
+      request: django.http.HttpRequest
+      repo: Repository
+    Return:
+      A rendered page if unauthorized, otherwise none
+    """
+    if not Permissions.can_view_repo(request.session, repo):
+        server = repo.user.server
+        user = server.signed_in_user(request.session)
+        uri = request.build_absolute_uri()
+        data = {'try_server': None}
+        logger.info(f'User {user} does not have permission to view {uri} for {server}/{repo}')
+        if user is None:
+            data['try_server'] = str(server)
+        return render(request, 'ci/unauthorized_repo.html', data, status=403)
+    return None
 
 def main(request):
     """
@@ -113,6 +141,7 @@ def user_repo_settings(request):
     Return:
       django.http.HttpResponse based object
     """
+    viewable_repos = Permissions.viewable_repos(request.session)
     current_repos = []
     all_repos = []
     users = {}
@@ -121,10 +150,12 @@ def user_repo_settings(request):
         user = gitserver.signed_in_user(request.session)
         if user != None:
             users[gitserver.pk] = user
-            for repo in user.preferred_repos.filter(user__server=gitserver).all():
+            repos_q = user.preferred_repos.filter(user__server=gitserver, id__in=viewable_repos)
+            for repo in repos_q.all():
                 current_repos.append(repo.pk)
-        q = models.Repository.objects.filter(active=True, user__server=gitserver).order_by('user__name', 'name').all()
-        for repo in q:
+        repos_q = models.Repository.objects.filter(active=True, user__server=gitserver, id__in=viewable_repos)
+        repos_q = repos_q.order_by('user__name', 'name').all()
+        for repo in repos_q.all():
             all_repos.append((repo.pk, str(repo)))
 
     if not users:
@@ -160,6 +191,11 @@ def view_pr(request, pr_id):
       django.http.HttpResponse based object
     """
     pr = get_object_or_404(models.PullRequest.objects.select_related('repository__user'), pk=pr_id)
+
+    unauthorized = render_unauthorized_repo(request, pr.repository)
+    if unauthorized is not None:
+        return unauthorized
+
     ev = pr.events.select_related('build_user', 'base__branch__repository__user__server').latest()
     allowed = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
     current_alt = []
@@ -257,13 +293,20 @@ def view_event(request, event_id):
     """
     Show the details of an Event
     """
-    ev = get_object_or_404(EventsStatus.events_with_head(), pk=event_id)
+    q = EventsStatus.events_with_head().select_related('base__branch__repository')
+    ev = get_object_or_404(q, pk=event_id)
+
+    unauthorized = render_unauthorized_repo(request, ev.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
     evs_info = EventsStatus.multiline_events_info([ev])
     allowed = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
     has_unactivated = ev.jobs.filter(active=False).count() != 0
     context = {'event': ev,
         'events': evs_info,
         'allowed_to_cancel': allowed,
+        'allowed_to_prioritize': Permissions.is_server_admin(request.session, ev.base.server()),
         "update_interval": settings.EVENT_PAGE_UPDATE_INTERVAL,
         "has_unactivated": has_unactivated,
         }
@@ -273,7 +316,13 @@ def get_job_results(request, job_id):
     """
     Just download all the output of the job into a tarball.
     """
-    job = get_object_or_404(models.Job.objects.select_related('recipe',).prefetch_related('step_results'), pk=job_id)
+    q = models.Job.objects.select_related('recipe__repository').prefetch_related('step_results')
+    job = get_object_or_404(q, pk=job_id)
+
+    unauthorized = render_unauthorized_repo(request, job.recipe.repository)
+    if unauthorized is not None:
+        return unauthorized
+
     perms = Permissions.job_permissions(request.session, job)
     if not perms['can_see_results']:
         return HttpResponseForbidden('Not allowed to see results')
@@ -310,6 +359,11 @@ def view_job(request, job_id):
                 'step_results',
                 'changelog'))
     job = get_object_or_404(q, pk=job_id)
+
+    unauthorized = render_unauthorized_repo(request, job.event.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
     perms = Permissions.job_permissions(request.session, job)
     clients = None
     if perms['can_see_client']:
@@ -350,6 +404,10 @@ def do_repo_page(request, repo):
         request[django.http.HttpRequest]
         repo[models.Repository]
     """
+    unauthorized = render_unauthorized_repo(request, repo)
+    if unauthorized is not None:
+        return unauthorized
+
     limit = 30
     repos_status = RepositoryStatus.filter_repos_status([repo.pk])
     events_info = EventsStatus.events_filter_by_repo([repo.pk], limit=limit)
@@ -415,6 +473,10 @@ def do_branch_page(request, branch):
     if request.method != "GET":
         return HttpResponseNotAllowed(['GET'])
 
+    unauthorized = render_unauthorized_repo(request, branch.repository)
+    if unauthorized is not None:
+        return unauthorized
+
     causes = []
     if request.GET.get("do_filter", "0") == "0":
         causes = [models.Event.PUSH, models.Event.MANUAL, models.Event.RELEASE]
@@ -463,18 +525,21 @@ def view_user(request, username):
     if users.count() == 0:
         raise Http404('Bad username')
 
-    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username)
+    viewable_repos = Permissions.viewable_repos(request.session)
+    repos = RepositoryStatus.get_user_repos_with_open_prs_status(username, filter_repo_ids=viewable_repos)
     pr_ids = []
     for r in repos:
         for pr in r["prs"]:
             pr_ids.append(pr["id"])
-    event_list = EventsStatus.get_single_event_for_open_prs(pr_ids)
+    event_list = EventsStatus.get_single_event_for_open_prs(pr_ids, filter_repo_ids=viewable_repos)
     evs_info = EventsStatus.multiline_events_info(event_list)
     data = {'username': username, 'repos': repos, 'events': evs_info, "update_interval": settings.EVENT_PAGE_UPDATE_INTERVAL,}
     return render(request, 'ci/user.html', data)
 
 def pr_list(request):
+    viewable_repos = Permissions.viewable_repos(request.session)
     pr_list = (models.PullRequest.objects
+                .filter(repository__id__in=viewable_repos)
                 .order_by('-created')
                 .select_related('repository__user__server')
                 .order_by('repository__user__name', 'repository__name', 'number'))
@@ -482,7 +547,9 @@ def pr_list(request):
     return render(request, 'ci/prs.html', {'prs': prs})
 
 def branch_list(request):
+    viewable_repos = Permissions.viewable_repos(request.session)
     branch_list = (models.Branch.objects
+                    .filter(repository__id__in=viewable_repos)
                     .exclude(status=models.JobStatus.NOT_STARTED)
                     .select_related('repository__user__server')
                     .order_by('repository__user__name', 'repository__name', 'name'))
@@ -498,14 +565,67 @@ def client_list(request):
     data = {'clients': client_list, 'allowed': True, 'update_interval': settings.HOME_PAGE_UPDATE_INTERVAL, }
     return render(request, 'ci/clients.html', data)
 
+def manual_cron(request, recipe_id):
+    allowed = Permissions.is_allowed_to_see_clients(request.session)
+    if not allowed:
+        return HttpResponseForbidden('Not allowed to start manual cron runs')
+
+    r = get_object_or_404(models.Recipe, pk=recipe_id)
+    user = r.build_user
+    branch = r.branch
+
+    latest = user.api().last_sha(branch.repository.user.name, branch.repository.name, branch.name)
+    #likely need to add exception checks for this!
+    if latest: r.last_scheduled = datetime.now(tz=pytz.UTC); r.save(); mev = ManualEvent.ManualEvent(user, branch, latest, "", recipe=r); mev.force = True; mev.save(update_branch_status=True);
+
+    return redirect('ci:cronjobs')
+
+def cronjobs(request):
+    # TODO: make this check for permission to view cron stuff instead
+    allowed = Permissions.is_allowed_to_see_clients(request.session)
+    if not allowed:
+        return render(request, 'ci/cronjobs.html', {'recipes': None, 'allowed': False})
+
+    recipe_list = models.Recipe.objects.filter(active=True, current=True, scheduler__isnull=False, branch__isnull=False).exclude(scheduler="").order_by('repository__name')
+    local_tz = pytz.timezone('US/Mountain')
+    for r in recipe_list:
+        events = (EventsStatus
+                        .get_default_events_query()
+                        .filter(jobs__recipe__filename=r.filename, jobs__recipe__cause=r.cause).order_by('-created'))
+        r.most_recent_event = events[0] if len(events) > 0 else None
+
+        c = croniter(r.scheduler, start_time=r.last_scheduled.astimezone(local_tz))
+        r.next_run_time = c.get_next(datetime)
+
+    # TODO: augment recipes objects with fields that html template will need.
+    data = {'recipes': recipe_list, 'allowed': True, 'update_interval': settings.HOME_PAGE_UPDATE_INTERVAL, }
+    return render(request, 'ci/cronjobs.html', data)
+
+def ready_jobs(request):
+    allowed = Permissions.is_allowed_to_see_clients(request.session)
+    if not allowed:
+        return render(request, 'ci/ready_jobs.html', {'allowed': False, 'jobs_by_config': None, 'num_jobs': None})
+
+    num_jobs = 0
+    jobs_by_config = defaultdict(list)
+    for job in get_ready_jobs():
+        jobs_by_config[str(job.config)].append(job)
+        num_jobs += 1
+
+    data = {'allowed': True,
+            'jobs_by_config': dict(jobs_by_config),
+            'num_jobs': num_jobs}
+    return render(request, 'ci/ready_jobs.html', data)
+
 def clients_info():
     """
     Gets the information on all the currently active clients.
-    Retunrns:
+    Retruns:
       list of dicts containing client information
     """
     sclients = sorted_clients(models.Client.objects.exclude(status=models.Client.DOWN))
-    clients = []
+    active_clients = [] # clients that we've seen in <= 60 s
+    inactive_clients = [] # clients that we've seen in > 60 s
     for c in sclients:
         d = {'pk': c.pk,
             "ip": c.ip,
@@ -517,22 +637,33 @@ def clients_info():
         if c.unseen_seconds() > 2*7*24*60*60: # 2 weeks
             # do it like this so that last_seen doesn't get updated
             models.Client.objects.filter(pk=c.pk).update(status=models.Client.DOWN)
-        elif c.unseen_seconds() > 60:
+        elif c.unseen_seconds() > 160:
             d["status_class"] = "client_NotSeen"
-            clients.append(d)
+            inactive_clients.append(d)
         else:
             d["status_class"] = "client_%s" % c.status_slug()
-            clients.append(d)
+            active_clients.append(d)
+    clients = [] # sort these so that active clients (seen in < 60 s) are first
+    for d in active_clients:
+        clients.append(d)
+    for d in inactive_clients:
+        clients.append(d)
     return clients
 
 def event_list(request):
-    event_list = EventsStatus.get_default_events_query()
+    viewable_repos = Permissions.viewable_repos(request.session)
+    event_list = EventsStatus.get_default_events_query(filter_repo_ids=viewable_repos)
     events = get_paginated(request, event_list)
     evs_info = EventsStatus.multiline_events_info(events)
     return render(request, 'ci/events.html', {'events': evs_info, 'pages': events})
 
 def sha_events(request, owner, repo, sha):
     repo = get_object_or_404(models.Repository.objects, name=repo, user__name=owner)
+
+    unauthorized = render_unauthorized_repo(request, repo)
+    if unauthorized is not None:
+        return unauthorized
+
     event_q = models.Event.objects.filter(head__branch__repository=repo, head__sha__startswith=sha)
     event_list = EventsStatus.get_default_events_query(event_q)
     events = get_paginated(request, event_list)
@@ -541,7 +672,13 @@ def sha_events(request, owner, repo, sha):
             {'events': evs_info, 'pages': events, 'sha': sha, 'repo': repo})
 
 def recipe_events(request, recipe_id):
-    recipe = get_object_or_404(models.Recipe, pk=recipe_id)
+    q = models.Recipe.objects.select_related('repository')
+    recipe = get_object_or_404(q, pk=recipe_id)
+
+    unauthorized = render_unauthorized_repo(request, recipe.repository)
+    if unauthorized is not None:
+        return unauthorized
+
     event_list = (EventsStatus
                     .get_default_events_query()
                     .filter(jobs__recipe__filename=recipe.filename, jobs__recipe__cause=recipe.cause))
@@ -552,6 +689,35 @@ def recipe_events(request, recipe_id):
         if job.status == models.JobStatus.SUCCESS:
             total += job.seconds.total_seconds()
             count += 1
+    if count:
+        total /= count
+    events = get_paginated(request, event_list)
+    evs_info = EventsStatus.multiline_events_info(events)
+    avg = timedelta(seconds=total)
+    data = {'recipe': recipe,
+            'events': evs_info,
+            'average_time': avg,
+            'pages': events,
+            }
+    return render(request, 'ci/recipe_events.html', data)
+
+def recipe_crons(request, recipe_id):
+    q = models.Recipe.objects.select_related('repository')
+    recipe = get_object_or_404(q, pk=recipe_id)
+
+    unauthorized = render_unauthorized_repo(request, recipe.repository)
+    if unauthorized is not None:
+        return unauthorized
+
+    event_list = (EventsStatus
+                    .get_default_events_query()
+                    .filter(jobs__recipe__filename=recipe.filename, jobs__recipe__cause=recipe.cause, jobs__recipe__scheduler__isnull=False).exclude(jobs__recipe__scheduler=''))
+    total = 0
+    count = 0
+    qs = models.Job.objects.filter(recipe__filename=recipe.filename)
+    for job in qs.all():
+        total += job.seconds.total_seconds() if job.status == models.JobStatus.SUCCESS else 0
+        count += 1 if job.status == models.JobStatus.SUCCESS else 0
     if count:
         total /= count
     events = get_paginated(request, event_list)
@@ -587,7 +753,13 @@ def invalidate_event(request, event_id):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    ev = get_object_or_404(models.Event, pk=event_id)
+    q = models.Event.objects.select_related('base__branch__repository')
+    ev = get_object_or_404(q, pk=event_id)
+
+    unauthorized = render_unauthorized_repo(request, ev.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
     allowed = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
     if not allowed:
         messages.error(request, 'You need to be signed in and be a collaborator to invalidate results.')
@@ -610,6 +782,53 @@ def invalidate_event(request, event_id):
         invalidate_job(request, job, message, same_client, check_ready=False)
     # Only do this once so that we get the job dependencies setup correctly.
     ev.make_jobs_ready()
+
+    return redirect('ci:view_event', event_id=ev.pk)
+
+def prioritize_job(request, job, message):
+    """
+    Convience function to prioritized a job and show a message to the user.
+    Input:
+      request: django.http.HttpRequest
+      job: models.Job
+      message: str
+    """
+    job.set_prioritized(message)
+    messages.info(request, f'Job {job} prioritized')
+
+def prioritize_event(request, event_id):
+    """
+    Prioritize all the jobs of an event.
+    The user must be signed in.
+    Input:
+      request: django.http.HttpRequest
+      event_id. models.Event.pk: PK of the event to be invalidated
+    Return: django.http.HttpResponse based object
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    q = models.Event.objects.select_related('base__branch__repository')
+    ev = get_object_or_404(q, pk=event_id)
+
+    unauthorized = render_unauthorized_repo(request, ev.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
+    if not Permissions.is_server_admin(request.session, ev.base.server()):
+        messages.error(request, 'You are not authorized to prioritize events.')
+        return redirect('ci:view_event', event_id=ev.pk)
+
+    user = ev.base.server().signed_in_user(request.session)
+    comment = escape(request.POST.get("comment"))
+    logger.info(f'Event {ev.pk}: {ev} prioritized by {user}')
+    event_url = reverse("ci:view_event", args=[ev.pk])
+    message = f"Parent <a href='{event_url}'>event</a> prioritized by {user}"
+    if comment:
+        message += " with comment: %s" % comment
+
+    for job in ev.jobs.all():
+        prioritize_job(request, job, message)
 
     return redirect('ci:view_event', event_id=ev.pk)
 
@@ -647,7 +866,13 @@ def invalidate(request, job_id):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    job = get_object_or_404(models.Job, pk=job_id)
+    q = models.Job.objects.select_related('event__base__branch__repository')
+    job = get_object_or_404(q, pk=job_id)
+
+    unauthorized = render_unauthorized_repo(request, job.event.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
     allowed = Permissions.is_collaborator(request.session, job.event.build_user, job.event.base.repo())
     if not allowed:
         raise PermissionDenied('You are not allowed to invalidate results.')
@@ -672,6 +897,37 @@ def invalidate(request, job_id):
 
     logger.info('Job {}: {} on {} invalidated by {}'.format(job.pk, job, job.recipe.repository, signed_in_user))
     invalidate_job(request, job, message, same_client, client)
+    return redirect('ci:view_job', job_id=job.pk)
+
+def prioritize(request, job_id):
+    """
+    Prioritize a Job.
+    The user must be signed in.
+    Input:
+      request: django.http.HttpRequest
+      job_id: models.Job.pk
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    q = models.Job.objects.select_related('event__base__branch__repository')
+    job = get_object_or_404(q, pk=job_id)
+
+    unauthorized = render_unauthorized_repo(request, job.event.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
+    if not Permissions.is_server_admin(request.session, job.event.base.server()):
+        raise PermissionDenied('You are not allowed to prioritize jobs.')
+
+    user = job.event.base.server().signed_in_user(request.session)
+    comment = escape(request.POST.get('comment'))
+    message = f"Prioritized by {user}"
+    if comment:
+        message += "\nwith comment: %s" % comment
+
+    logger.info('Job {}: {} on {} prioritized by {}'.format(job.pk, job, job.recipe.repository, user))
+    prioritize_job(request, job, message)
     return redirect('ci:view_job', job_id=job.pk)
 
 def sort_recipes_key(entry):
@@ -849,7 +1105,13 @@ def cancel_event(request, event_id):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    ev = get_object_or_404(models.Event, pk=event_id)
+    q = models.Event.objects.select_related('base__branch__repository')
+    ev = get_object_or_404(q, pk=event_id)
+
+    unauthorized = render_unauthorized_repo(request, ev.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
     allowed = Permissions.is_collaborator(request.session, ev.build_user, ev.base.repo())
 
     if not allowed:
@@ -882,7 +1144,13 @@ def cancel_job(request, job_id):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    job = get_object_or_404(models.Job, pk=job_id)
+    q = models.Job.objects.select_related('event__base__branch__repository')
+    job = get_object_or_404(q, pk=job_id)
+
+    unauthorized = render_unauthorized_repo(request, job.event.base.repo())
+    if unauthorized is not None:
+        return unauthorized
+
     allowed = Permissions.is_collaborator(request.session, job.event.build_user, job.event.base.repo())
     if not allowed:
         return HttpResponseForbidden('Not allowed to cancel this job')
@@ -950,39 +1218,12 @@ def scheduled_events(request):
     """
     List schedule events
     """
-    event_list = EventsStatus.get_default_events_query().filter(cause=models.Event.MANUAL)
+    viewable_repos = Permissions.viewable_repos(request.session)
+    event_list = EventsStatus.get_default_events_query(filter_repo_ids=viewable_repos)
+    event_list = event_list.filter(cause=models.Event.MANUAL)
     events = get_paginated(request, event_list)
     evs_info = EventsStatus.multiline_events_info(events)
     return render(request, 'ci/scheduled.html', {'events': evs_info, 'pages': events})
-
-def job_info_search(request):
-    """
-    Presents a form to filter jobs by either OS version or modules loaded.
-    The modules loaded are parsed from the output of jobs and then stored
-    in the database. This form allows to select which jobs contained the
-    selected modules.
-    Input:
-      request: django.http.HttpRequest
-    Return: django.http.HttpResponse based object
-    """
-    jobs = []
-    if request.method == "GET":
-        form = forms.JobInfoForm(request.GET)
-        if form.is_valid():
-            jobs = models.Job.objects.order_by("-created").select_related("event",
-                "recipe",
-                'config',
-                'event__pull_request',
-                'event__base__branch__repository__user',
-                'event__head__branch__repository__user')
-            if form.cleaned_data['os_versions']:
-                jobs = jobs.filter(operating_system__in=form.cleaned_data['os_versions'])
-            if form.cleaned_data['modules']:
-                for mod in form.cleaned_data['modules'].all():
-                    jobs = jobs.filter(loaded_modules__pk=mod.pk)
-
-    jobs = get_paginated(request, jobs)
-    return render(request, 'ci/job_info_search.html', {"form": form, "jobs": jobs})
 
 def get_branch_status(branch):
     """

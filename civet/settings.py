@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,11 @@
 
 from __future__ import unicode_literals, absolute_import
 from django.conf.locale.en import formats as en_formats
+
+# For parallel testing
+import multiprocessing
+multiprocessing.set_start_method('fork')
+
 """
 Django settings for civet project.
 
@@ -37,7 +42,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = '-85d^-^foncz90n+p7ap#irn1&$v*5%d!$u!w0m@w2v*m#&698'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 # set to the hosts that urls will have in their names
 # In other words, the hosts that this server will accept connections for
@@ -45,17 +50,7 @@ DEBUG = True
 # Ex: ['localhost', 'www.moosebuild.org', 'moosebuild.org']
 ALLOWED_HOSTS = []
 
-SHOW_DEBUG_TOOLBAR = False
-
-def show_debug_toolbar(request):
-    return DEBUG and SHOW_DEBUG_TOOLBAR
-
-# Make the debug toolbar get a local copy of jquery
-DEBUG_TOOLBAR_CONFIG = {"JQUERY_URL": "/static/third_party/jquery-2.1.4/jquery.min.js",
-    'SHOW_TOOLBAR_CALLBACK': show_debug_toolbar
-    }
-
-INSTALLED_APPS = (
+INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -64,12 +59,10 @@ INSTALLED_APPS = (
     'django.contrib.staticfiles',
     'django.contrib.humanize',
     'ci',
-    'debug_toolbar',
-    'sslserver',
-    'graphos',
     'corsheaders',
     'django_extensions',
-)
+    'civet.apps.scheduleConfig',
+]
 
 MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -80,8 +73,11 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'debug_toolbar.middleware.DebugToolbarMiddleware',
 ]
+
+if DEBUG:
+    INSTALLED_APPS += ['debug_toolbar']
+    MIDDLEWARE += ['debug_toolbar.middleware.DebugToolbarMiddleware']
 
 ROOT_URLCONF = 'civet.urls'
 
@@ -122,6 +118,9 @@ postgresql_database = {'ENGINE': 'django.db.backends.postgresql_psycopg2',
         }
 
 DATABASES = {'default': testing_database}
+
+# Set a database field default (required as of 3.2, or you will start to see warnings)
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.8/topics/i18n/
@@ -238,11 +237,11 @@ GITSERVER_GITHUB = 0
 GITSERVER_GITLAB = 1
 GITSERVER_BITBUCKET = 2
 
-# Instead of checking the Git server each time to check if the
-# user is a collaborator on a repo, we cache the results
+# Instead of checking the Git server each time for permissions
+# (member of a team, repo visibility, etc), we cache the results
 # for this amount of time. Once this has expired then we
 # recheck.
-COLLABORATOR_CACHE_TIMEOUT = 60*60
+PERMISSION_CACHE_TIMEOUT = 60*60
 
 # The absolute url for the server. This is used
 # in places where we need to send links to outside
@@ -255,6 +254,10 @@ ABSOLUTE_BASE_URL = "https://localhost"
 HOME_PAGE_UPDATE_INTERVAL = 20000
 JOB_PAGE_UPDATE_INTERVAL = 20000
 EVENT_PAGE_UPDATE_INTERVAL = 20000
+
+# Internal (in milliseconds) at which to rebuild the cache for available jobs
+# 0 means to always update
+GET_JOB_UPDATE_INTERVAL = 0
 
 # This allows for cross origin resource sharing.
 # Mainly so that mooseframework.org can have access
@@ -272,6 +275,10 @@ CORS_ALLOW_METHODS = (
 See the wiki for available options with descriptions and examples.
 https://github.com/idaholab/civet/wiki/Settings
 """
+
+# Set a default (required as of 3.2, or you will start to see warnings)
+# TODO: Understand what it is this actual does, and if its safe for us to use
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 
 github_repo_settings = {
         "idaholab/moose":
@@ -300,7 +307,7 @@ github_repo_settings = {
                 "badges": [{
                     "recipe": "recipes/moosebuild/moose/Test_deprecated.cfg",
                     "name": "deprecated",
-                    }],
+                    }]
             },
         }
 
@@ -324,6 +331,7 @@ github_config = {"type": GITSERVER_GITHUB,
         "icon_class": "fa fa-github fa-lg",
         "civet_base_url": ABSOLUTE_BASE_URL,
         "repository_settings": github_repo_settings,
+        "login_label": "External Login" #modify this to change the text on the login button
     }
 
 gitlab_config = {"type": GITSERVER_GITLAB,
@@ -345,6 +353,7 @@ gitlab_config = {"type": GITSERVER_GITLAB,
         "request_timeout": 5,
         "icon_class": "fa fa-gitlab fa-lg",
         "civet_base_url": ABSOLUTE_BASE_URL,
+        "login_label": "External Login" #modify this to change the text on the login button
     }
 
 bitbucket_config = {"type": GITSERVER_BITBUCKET,
@@ -364,6 +373,7 @@ bitbucket_config = {"type": GITSERVER_BITBUCKET,
         "request_timeout": 5,
         "icon_class": "fa fa-bitbucket fa-lg",
         "civet_base_url": ABSOLUTE_BASE_URL,
+        "login_label": "External Login" #modify this to change the text on the login button
     }
 
 # supported gitservers

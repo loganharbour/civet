@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ def base_git_config(authorized_users=[],
             "pr_wip_prefix": pr_wip_prefix,
             "civet_base_url": "https://dummy_civet_server",
             "repository_settings": repo_settings,
+            "public_default": True
             }
 
 def github_config(**kwargs):
@@ -102,10 +103,13 @@ def create_user_with_token(name='testUser', server=None):
 def get_owner():
     return create_user(name='testmb')
 
-def create_repo(name='testRepo', user=None, server=None):
+def create_repo(name='testRepo', user=None, server=None, active=None):
     if not user:
         user = create_user_with_token(server=server)
-    return models.Repository.objects.get_or_create(name=name, user=user)[0]
+    kwargs = {'name': name, 'user': user}
+    if active is not None:
+        kwargs['active'] = active
+    return models.Repository.objects.get_or_create(**kwargs)[0]
 
 def create_branch(name='testBranch', user=None, repo=None):
     if not repo:
@@ -139,7 +143,7 @@ def create_pr(title='testTitle', number=1, url='http', repo=None, server=None):
 def create_build_config(name='testBuildConfig'):
     return models.BuildConfig.objects.get_or_create(name=name)[0]
 
-def create_recipe(name='testRecipe', user=None, repo=None, cause=models.Recipe.CAUSE_PULL_REQUEST, branch=None, current=True):
+def create_recipe(name='testRecipe', user=None, repo=None, cause=models.Recipe.CAUSE_PULL_REQUEST, branch=None, current=True, scheduler=None):
     if not user:
         user = create_user_with_token()
     if not repo:
@@ -152,6 +156,7 @@ def create_recipe(name='testRecipe', user=None, repo=None, cause=models.Recipe.C
         repository=repo,
         private=True,
         active=True,
+        scheduler=scheduler,
         cause=cause,
         filename=name,
         )
@@ -229,14 +234,6 @@ def create_step_result(status=models.JobStatus.NOT_STARTED, step=None, job=None,
     result.status = status
     result.save()
     return result
-
-def create_osversion(name="Linux", version="1", other="other"):
-    obj, created = models.OSVersion.objects.get_or_create(name=name, version=version, other=other)
-    return obj
-
-def create_loadedmodule(name="module"):
-    obj, created = models.LoadedModule.objects.get_or_create(name=name)
-    return obj
 
 def create_badge(name="badge", repo=None):
     if not repo:

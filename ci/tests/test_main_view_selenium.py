@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 
 from __future__ import unicode_literals, absolute_import
 from ci.tests import SeleniumTester, utils
+from selenium.webdriver.common.by import By
 from ci import models
 from django.urls import reverse
 from django.test import override_settings
@@ -84,6 +85,7 @@ class Tests(SeleniumTester.SeleniumTester):
         self.check_events()
 
     @SeleniumTester.test_drivers()
+    @override_settings(PERMISSION_CACHE_TIMEOUT=0)
     def test_new_repo(self):
         repo, branch = self.create_repo_with_prs()
         self.get()
@@ -194,6 +196,7 @@ class Tests(SeleniumTester.SeleniumTester):
 
     @SeleniumTester.test_drivers()
     @override_settings(DEBUG=True)
+    @override_settings(PERMISSION_CACHE_TIMEOUT=0)
     def test_repo_preferences(self):
         repos = []
         for i in range(3):
@@ -223,7 +226,7 @@ class Tests(SeleniumTester.SeleniumTester):
                 self.check_repos()
                 self.check_events()
             else:
-                repo_list = self.selenium.find_elements_by_xpath("//ul[@id='repo_status']/li")
+                repo_list = self.selenium.find_elements(By.XPATH, "//ul[@id='repo_status']/li")
                 self.assertEqual(len(repo_list), user.preferred_repos.count())
                 with self.assertRaises(Exception):
                     self.check_repos()
@@ -235,7 +238,7 @@ class Tests(SeleniumTester.SeleniumTester):
                     for ev in models.Event.objects.filter(base__branch__repository=repo).all():
                         self.check_event_row(ev)
                         events.append(ev)
-                event_rows = self.selenium.find_elements_by_xpath("//table[@id='event_table']/tbody/tr")
+                event_rows = self.selenium.find_elements(By.XPATH, "//table[@id='event_table']/tbody/tr")
                 self.assertEqual(len(event_rows), len(events))
                 self.get("/?default")
                 self.check_repos()

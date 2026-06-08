@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ from client.JobGetter import JobGetter
 from client.JobRunner import JobRunner
 from client.ServerUpdater import ServerUpdater
 from client.InterruptHandler import InterruptHandler
-import os, signal
+import os, signal, sys
 import time
 import traceback
+from typing import Callable
 
 import logging
 logger = logging.getLogger("civet_client")
@@ -81,6 +82,7 @@ class BaseClient(object):
         self.client_info = client_info
         self.command_q = Queue()
         self.runner_error = False
+        self.runner_killed = False
         self.thread_join_wait = 2*60*60 # 2 hours
 
         if self.client_info["log_file"]:
@@ -104,6 +106,39 @@ class BaseClient(object):
 
         if self.client_info["ssl_cert"]:
             self.client_info["ssl_verify"] = self.client_info["ssl_cert"]
+
+        self.client_info["build_configs"] = []
+        self.client_info['environment'] = {}
+
+        if 'client_name' in self.client_info:
+            self.set_environment('CIVET_CLIENT_NAME', self.client_info['client_name'])
+
+        # Entry point for running something before each runner step;
+        # would be a function that takes an env (the step env) and returns
+        # False it it failed
+        self._runner_pre_step: Callable[[dict | None], bool] = None
+        # Entry point for running something after each runner step;
+        # would be a function that takes an env (the step env) and returns
+        # False it it failed
+        self._runner_post_step: Callable[[dict | None], bool] = None
+
+    def get_client_info(self, key):
+        """
+        Returns:
+          The client information associated with the given key.
+        Raises:
+          ClientException: If client info is not found with the given key.
+        """
+        if key not in self.client_info:
+            raise ClientException('Client info with key {} does not exist'.format(key))
+        return self.client_info[key]
+
+    def set_client_info(self, key, value):
+        """
+        Sets the client info with the given key to the given value.
+        """
+        self.get_client_info(key) # Check for existance
+        self.client_info[key] = value
 
     def set_log_dir(self, log_dir):
         """
@@ -149,11 +184,47 @@ class BaseClient(object):
         self.check_log_dir(log_dir)
         self.client_info["log_file"] = log_file
 
-    def run_claimed_job(self, server, servers, claimed):
+    def add_config(self, config):
+        if not isinstance(config, str):
+            raise ClientException('config must be a str')
+        if config in self.get_client_info('build_configs'):
+            raise ClientException('config {} already exists'.format(config))
+        self.client_info['build_configs'].append(config)
+
+    def get_environment(self, var=None):
+        """
+        Gets the additional environment variables that were set
+        for the client via set_environment.
+        Input:
+          var: The environment variable to get, if not provided, returns the whole environment dict
+        Raises:
+          ClientException if var is provided and the variable is not in the environment dict
+        """
+        if var:
+            if str(var) not in self.get_client_info('environment'):
+                raise ClientException('Variable {} is not in the client environment'.format(var))
+            return self.get_client_info('environment')[str(var)]
+        return self.get_client_info('environment')
+
+    def set_environment(self, var, value):
+        """
+        Sets an environment variable to be set when this client
+        executes a job.
+        Input:
+          var: The environment variable
+          value: The environment variable value
+        """
+        environment = self.get_client_info('environment')
+        environment[str(var)] = str(value)
+        self.set_client_info('environment', environment)
+
+    def run_claimed_job(self, server, servers, claimed, fail: bool = False):
         job_info = claimed["job_info"]
         job_id = job_info["job_id"]
+        build_key = claimed["build_key"]
         message_q = Queue()
-        runner = JobRunner(self.client_info, job_info, message_q, self.command_q)
+        runner = JobRunner(self.client_info, job_info, message_q, self.command_q, build_key,
+                           pre_step=self._runner_pre_step, post_step=self._runner_post_step)
         self.cancel_signal.set_message({"job_id": job_id, "command": "cancel"})
 
         control_q = Queue()
@@ -165,8 +236,8 @@ class BaseClient(object):
                 control_q.put({"server": entry, "message": "Job {}: {}".format(job_id, job_info["recipe_name"])})
 
         updater_thread = Thread(target=ServerUpdater.run, args=(updater,))
-        updater_thread.start();
-        runner.run_job()
+        updater_thread.start()
+        runner.run_job(fail=fail)
         if not runner.stopped and not runner.canceled:
             logger.info("Joining message_q")
             message_q.join()
@@ -178,11 +249,14 @@ class BaseClient(object):
         # However, we don't want to hang forever.
         logger.info("Joining ServerUpdater")
         updater_thread.join(self.thread_join_wait)
-        if updater_thread.isAlive():
+        # python >= 3.9 changed Thread.isAlive() -> thread.is_alive()
+        old_is_alive = sys.version_info[0] == 3 and sys.version_info[1] < 9
+        if updater_thread.isAlive() if old_is_alive else updater_thread.is_alive():
             logger.warning("Failed to join ServerUpdater thread. Job {}: '{}' not updated correctly".format(
                 job_id, job_info["recipe_name"]))
         self.command_q.queue.clear()
         self.runner_error = runner.error
+        self.runner_killed = runner.job_killed
 
     def run(self):
         """
@@ -193,9 +267,9 @@ class BaseClient(object):
             do_poll = True
             try:
                 getter = JobGetter(self.client_info)
-                claimed = getter.find_job()
+                claimed = getter.get_job()
                 if claimed:
-                    server = self.client_info["server"]
+                    server = self.get_client_info('server')
                     self.run_claimed_job(server, [server], claimed)
                     # finished the job, look for a new one immediately
                     do_poll = False
@@ -214,4 +288,4 @@ class BaseClient(object):
                 break
 
             if do_poll:
-                time.sleep(self.client_info["poll"])
+                time.sleep(self.get_client_info('poll'))

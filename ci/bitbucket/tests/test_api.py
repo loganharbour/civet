@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -252,5 +252,5 @@ class Tests(TestCase):
         self.gapi.edit_pr_comment(None, None)
         self.gapi.is_member(None, None)
         self.gapi.pr_review_comment(None, None)
-        self.gapi.update_pr_status(None, None, None, None, None, None, None)
+        self.gapi.update_status(None, None, None, None, None, None, None)
         self.gapi.automerge(None, None)

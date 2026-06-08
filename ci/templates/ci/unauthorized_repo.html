@@ -1,6 +1,6 @@
 {% extends "ci/base.html" %}
 {% comment %}
-  Copyright 2016 Battelle Energy Alliance, LLC
+  Copyright 2016-2025 Battelle Energy Alliance, LLC
 
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -14,27 +14,17 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 {% endcomment %}
-{% load staticfiles %}
-{% block title %}Civet: Job info search{% endblock %}
+{% block title %}Not authorized{% endblock %}
 {% block content %}
-<div class="center">
-  <h3>Filter jobs</h3>
-</div>
-<form action="{% url "ci:job_info_search" %}" method="get">
-  <ul class="list-group">
-    {% for field in form %}
-      <li class="list-group-item">
-        {{ field.label_tag }} {{ field }} {{ field.errors }}
-      </li>
-    {% endfor %}
-  </ul>
-  <input type="submit" value="Get Jobs"/>
-</form>
 
 <div class="center">
-  <h4>Jobs</h4>
+  <h4>Not authorized</h4>
 </div>
-<br />
-{% include "ci/job_table.html" with jobs=jobs %}
+
+<p>You are not authorized to view this repository.</p>
+
+{% if try_server is not None %}
+<p>Try logging into {{ try_server }} to gain access.</p>
+{% endif %}
 
 {% endblock %}

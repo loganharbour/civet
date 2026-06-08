@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -82,8 +82,13 @@ class GitAPI(object):
         return timeout
 
     def _response_to_str(self, response):
+        response_json = 'INVALID JSON'
+        try:
+            response_json = self._format_json(response.json())
+        except:
+            pass
         return "Status code: %s\nReason: %s\nJSON response:\n%s" % \
-            (response.status_code, response.reason, self._format_json(response.json()))
+            (response.status_code, response.reason, response_json)
 
     def _format_json(self, data):
         return json.dumps(data, indent=2)
@@ -307,6 +312,17 @@ class GitAPI(object):
         """
 
     @abc.abstractmethod
+    def can_view_repo(self, owner, name):
+        """
+        Checks whether or not a user can view a repo
+        Input:
+          owner[str]: the repo owner
+          name[str]: the reo name
+        Return:
+          bool: Whether or not the repo can be viewed
+        """
+
+    @abc.abstractmethod
     def get_all_repos(self, owner):
         """
         Get a list of repositories the user has access to
@@ -338,7 +354,7 @@ class GitAPI(object):
         """
 
     @abc.abstractmethod
-    def update_pr_status(self, base, head, state, event_url, description, context, job_stage):
+    def update_status(self, base, head, state, event_url, description, context, job_stage):
         """
         Update the PR status.
         Input:

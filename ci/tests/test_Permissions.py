@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,8 +24,11 @@ from requests_oauthlib import OAuth2Session
 @override_settings(INSTALLED_GITSERVERS=[utils.github_config()])
 class Tests(DBTester.DBTester):
     @patch.object(OAuth2Session, 'get')
-    def test_is_collaborator(self, mock_get):
-        with self.settings(COLLABORATOR_CACHE_TIMEOUT=10):
+    @patch.object(models.GitUser, 'is_admin')
+    def test_is_collaborator(self, mock_is_admin, mock_get):
+        with self.settings(PERMISSION_CACHE_TIMEOUT=10):
+            mock_is_admin.return_value = False
+
             build_user = utils.create_user_with_token(name="build user")
             repo = utils.create_repo()
             user = utils.create_user(name="auth user")
@@ -39,39 +42,54 @@ class Tests(DBTester.DBTester):
             session = self.client.session
             mock_get.return_value = utils.Response(status_code=404) # not a collaborator
             allowed = Permissions.is_collaborator(session, build_user, repo)
+            self.assertEqual(mock_is_admin.call_count, 1)
             self.assertIs(allowed, False)
             self.assertEqual(mock_get.call_count, 1)
             session.save() # make sure the cache is saved
 
             # Now try again. The only query should be to get the signed in user
             mock_get.call_count = 0
+            mock_is_admin.call_count = 0
             with self.assertNumQueries(1):
                 allowed = Permissions.is_collaborator(session, build_user, repo)
+            self.assertEqual(mock_is_admin.call_count, 1)
             self.assertIs(allowed, False)
             self.assertEqual(mock_get.call_count, 0)
             session.save()
 
             # Now try again. We pass in the user so there shouldn't be any queries
+            mock_is_admin.call_count = 0
             with self.assertNumQueries(0):
                 allowed = Permissions.is_collaborator(session, build_user, repo, user=user)
             self.assertIs(allowed, False)
             self.assertEqual(mock_get.call_count, 0)
+            self.assertEqual(mock_is_admin.call_count, 1)
             session.save()
 
             # Just to make sure, it would be allowed but we still read from the cache
             mock_get.return_value = utils.Response(status_code=204) # is a collaborator
+            mock_is_admin.call_count = 0
             with self.assertNumQueries(0):
                 allowed = Permissions.is_collaborator(session, build_user, repo, user=user)
             self.assertIs(allowed, False)
             self.assertEqual(mock_get.call_count, 0)
+            self.assertEqual(mock_is_admin.call_count, 1)
             session.save()
 
-        with self.settings(COLLABORATOR_CACHE_TIMEOUT=0):
+        with self.settings(PERMISSION_CACHE_TIMEOUT=0):
             # now start over with no timeout
             session.clear()
             utils.simulate_login(session, user)
             mock_get.return_value = utils.Response(status_code=404) # not a collaborator
             mock_get.call_count = 0
+
+            # is an admin
+            mock_is_admin.call_count = 0
+            mock_is_admin.return_value = True
+            allowed = Permissions.is_collaborator(session, build_user, repo, user=user)
+            self.assertTrue(allowed)
+            self.assertEqual(mock_is_admin.call_count, 1)
+            mock_is_admin.return_value = False
 
             with self.assertNumQueries(0):
                 allowed = Permissions.is_collaborator(session, build_user, repo, user=user)

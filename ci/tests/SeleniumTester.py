@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,11 +19,15 @@ from django.test import override_settings
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from selenium import webdriver
 import functools
-from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException
 from django.utils.html import escape
 from ci import models, TimeUtils
 from ci.tests import utils
 import unittest, os
+import tempfile
 import time
 
 # This decorator was found at
@@ -105,6 +109,7 @@ class SeleniumTester(StaticLiveServerTestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls.chromedriver_dir = None
         cls.drivers = WebDriverList(
             cls.create_chrome_driver(),
     # The firefox driver doesn't seem to work properly anymore. Firefox 48, Selenium 0.9.0.
@@ -119,6 +124,8 @@ class SeleniumTester(StaticLiveServerTestCase):
     @classmethod
     def tearDownClass(cls):
         cls.drivers.quit()
+        if cls.chromedriver_dir:
+            cls.chromedriver_dir.cleanup()
         #cls.selenium.quit()
         super(SeleniumTester, cls).tearDownClass()
 
@@ -129,7 +136,20 @@ class SeleniumTester(StaticLiveServerTestCase):
         https://sites.google.com/a/chromium.org/chromedriver/
         and put it your path
         """
-        driver = webdriver.Chrome()
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+
+        try:
+            driver = webdriver.Chrome(options=options)
+        except WebDriverException:
+            try:
+                import chromedriver_autoinstaller
+            except:
+                raise Exception('Failed to find chromedriver; install chromedriver_autoinstaller to install it for you')
+            cls.chromedriver_dir = tempfile.TemporaryDirectory()
+            chromedriver_autoinstaller.install(path=cls.chromedriver_dir.name)
+            driver = webdriver.Chrome(options=options)
+
         driver.implicitly_wait(2)
         return driver
 
@@ -160,17 +180,17 @@ class SeleniumTester(StaticLiveServerTestCase):
         full_url = "%s%s" % (self.live_server_url, url)
         self.selenium.get(full_url)
         self.wait_for_load(timeout=wait_time)
-        WebDriverWait(self.selenium, wait_time).until(lambda driver: driver.find_element_by_tag_name('body'))
+        WebDriverWait(self.selenium, wait_time).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
 
     def wait_for_load(self, timeout=2):
-        WebDriverWait(self.selenium, timeout).until(lambda driver: driver.find_element_by_tag_name('body'))
+        WebDriverWait(self.selenium, timeout).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
 
     def wait_for_js(self, wait=2):
         time.sleep(wait)
 
     def check_js_error(self):
         with self.assertRaises(Exception):
-            elem = self.selenium.find_element_by_xpath("//body[@JSError]")
+            elem = self.selenium.find_elements(By.XPATH, "//body[@JSError]")
             # this shouldn't happen but if it does we want to see the message
             self.assertEqual(elem, "Shouldn't exist!")
         try:
@@ -183,7 +203,7 @@ class SeleniumTester(StaticLiveServerTestCase):
 
     def check_repos(self):
         active_repos = models.Repository.objects.filter(active=True)
-        repo_list = self.selenium.find_elements_by_xpath("//ul[@id='repo_status']/li")
+        repo_list = self.selenium.find_elements(By.XPATH, "//ul[@id='repo_status']/li")
         self.assertEqual(len(repo_list), active_repos.count())
         for repo in active_repos.all():
             self.check_repo_status(repo)
@@ -203,7 +223,7 @@ class SeleniumTester(StaticLiveServerTestCase):
             self.check_in_html(pr_elem_id, pr.username)
             self.assertEqual(pr_elem.get_attribute("data-sort"), str(pr.number))
 
-        pr_elems = self.selenium.find_elements_by_xpath("//ul[@id='pr_list_%s']/li" % repo.pk)
+        pr_elems = self.selenium.find_elements(By.XPATH, "//ul[@id='pr_list_%s']/li" % repo.pk)
         # make sure PRs are sorted properly
         for i, elem in enumerate(pr_elems):
             pr_num = int(elem.get_attribute("data-sort"))
@@ -214,7 +234,7 @@ class SeleniumTester(StaticLiveServerTestCase):
                 prev_num = int(pr_num)
 
     def check_event_row(self, ev):
-        event_tds = self.selenium.find_elements_by_xpath("//tr[@id='event_%s']/td" % ev.pk)
+        event_tds = self.selenium.find_elements(By.XPATH, "//tr[@id='event_%s']/td" % ev.pk)
         sorted_jobs = ev.get_sorted_jobs()
         if sorted_jobs:
             num_boxes = len(sorted_jobs) - 1 # each group will have a continuation box, except the last
@@ -223,12 +243,12 @@ class SeleniumTester(StaticLiveServerTestCase):
             num_boxes += 1 # this is the event description
             self.assertEqual(len(event_tds), num_boxes)
 
-        depends = self.selenium.find_elements_by_xpath('//td[@class="depends"]')
+        depends = self.selenium.find_elements(By.XPATH, '//td[@class="depends"]')
         for dep in depends:
             dep_html = dep.get_attribute('innerHTML')
             self.assertEqual(dep_html, '<span class="glyphicon glyphicon-arrow-right"></span>')
 
-        ev_tr = self.selenium.find_element_by_id("event_%s" % ev.pk)
+        ev_tr = self.selenium.find_element(By.ID, "event_%s" % ev.pk)
         self.assertIn(TimeUtils.sortable_time_str(ev.created), ev_tr.get_attribute("data-date"))
         ev_status = self.check_class("event_status_%s" % ev.pk, "job_status_%s" % ev.status_slug())
         ev_html = ev_status.get_attribute('innerHTML')
@@ -253,7 +273,7 @@ class SeleniumTester(StaticLiveServerTestCase):
 
     def check_events(self):
         events = models.Event.objects
-        event_rows = self.selenium.find_elements_by_xpath("//table[@id='event_table']/tbody/tr")
+        event_rows = self.selenium.find_elements(By.XPATH, "//table[@id='event_table']/tbody/tr")
         self.assertEqual(len(event_rows), events.count())
         for ev in events.all():
             self.check_event_row(ev)
@@ -289,7 +309,7 @@ class SeleniumTester(StaticLiveServerTestCase):
             self.check_in_html("pr_closed", "Open")
 
     def check_class(self, elem_id, good_class):
-        elem = self.selenium.find_element_by_id(elem_id)
+        elem = self.selenium.find_element(By.ID, elem_id)
         cls = elem.get_attribute("class")
         self.assertEqual(cls, good_class)
         return elem
@@ -310,7 +330,7 @@ class SeleniumTester(StaticLiveServerTestCase):
         return attrs
 
     def check_in_html(self, elem_id, s):
-        elem = self.selenium.find_element_by_id(elem_id)
+        elem = self.selenium.find_element(By.ID, elem_id)
         elem_html = elem.get_attribute("innerHTML")
         self.assertNotEqual(elem_html, None)
         self.assertIn(s, elem_html)
@@ -341,7 +361,7 @@ class SeleniumTester(StaticLiveServerTestCase):
 
     def check_job(self, job):
         job.refresh_from_db()
-        status_row_elem = self.selenium.find_element_by_id("job_status_row")
+        status_row_elem = self.selenium.find_element(By.ID, "job_status_row")
         self.assertEqual(status_row_elem.get_attribute("class"), "row job_status_%s" % job.status_slug())
         self.check_elem_bool_class(job.complete, "job_complete")
         if job.active:

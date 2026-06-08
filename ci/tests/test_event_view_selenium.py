@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 
 from __future__ import unicode_literals, absolute_import
 from ci.tests import SeleniumTester, utils
+from selenium.webdriver.common.by import By
 from django.test import override_settings
 from ci import models, Permissions
 from mock import patch
@@ -55,7 +56,7 @@ class Tests(SeleniumTester.SeleniumTester):
 
         # not allowed to cancel
         with self.assertRaises(Exception):
-            self.selenium.find_element_by_id("cancel_form")
+            self.selenium.find_element(By.ID, "cancel_form")
 
     @SeleniumTester.test_drivers()
     @patch.object(Permissions, 'is_collaborator')
@@ -67,7 +68,7 @@ class Tests(SeleniumTester.SeleniumTester):
         self.check_event(ev)
         self.check_events()
 
-        cancel_form = self.selenium.find_element_by_id("cancel_form")
+        cancel_form = self.selenium.find_element(By.ID, "cancel_form")
         cancel_form.submit()
         self.wait_for_load()
         self.wait_for_js()
@@ -86,7 +87,7 @@ class Tests(SeleniumTester.SeleniumTester):
 
         # not allowed to invalidate
         with self.assertRaises(Exception):
-            self.selenium.find_element_by_id("invalidate_form")
+            self.selenium.find_element(By.ID, "invalidate_form")
 
     @SeleniumTester.test_drivers()
     @patch.object(Permissions, 'is_collaborator')
@@ -98,9 +99,45 @@ class Tests(SeleniumTester.SeleniumTester):
         self.check_event(ev)
         self.check_events()
 
-        cancel_form = self.selenium.find_element_by_id("invalidate_form")
+        cancel_form = self.selenium.find_element(By.ID, "invalidate_form")
         cancel_form.submit()
         self.wait_for_load()
         self.wait_for_js()
         self.check_event(ev)
         self.check_events()
+
+    @SeleniumTester.test_drivers()
+    @patch.object(Permissions, 'is_server_admin')
+    def test_prioritize_invalid(self, mock_admin):
+        mock_admin.return_value = False
+        ev = self.create_event_with_jobs()
+        url = reverse('ci:view_event', args=[ev.pk])
+        self.get(url)
+        self.check_event(ev)
+        self.check_events()
+
+        # not allowed to prioritize
+        with self.assertRaises(Exception):
+            self.selenium.find_element(By.ID, "prioritize_form")
+
+    @SeleniumTester.test_drivers()
+    @patch.object(Permissions, 'is_server_admin')
+    def test_prioritize_valid(self, mock_admin):
+        ev = self.create_event_with_jobs()
+        mock_admin.return_value = True
+        url = reverse('ci:view_event', args=[ev.pk])
+        self.get(url)
+        self.check_event(ev)
+        self.check_events()
+        for job in [j for j in ev.jobs.all()]:
+            self.assertIsNone(job.prioritized)
+
+        cancel_form = self.selenium.find_element(By.ID, "prioritize_form")
+        cancel_form.submit()
+        self.wait_for_load()
+        self.wait_for_js()
+        self.check_event(ev)
+        self.check_events()
+        for job in [j for j in ev.jobs.all()]:
+            job.refresh_from_db()
+            self.assertIsNotNone(job.prioritized)

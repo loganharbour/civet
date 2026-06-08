@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 
 from __future__ import unicode_literals, absolute_import
 from django.shortcuts import redirect
+from django.utils.http import url_has_allowed_host_and_scheme
 from requests_oauthlib import OAuth2Session
 from django.contrib import messages
 import ci.models
@@ -72,8 +73,9 @@ class OAuth(object):
         self._user_url = None
         self._callback_user_key = None
         self._scope = None
-        self._addition_keys = ["allowed_to_see_clients", "teams"]
+        self._addition_keys = ["allowed_to_see_clients", "teams", 'viewable_repos_timeout', 'viewable_repos_cache']
         self._redirect_uri = None
+        self._header = { 'User-Agent': 'INL-CIVET/1.0 (+https://github.com/idaholab/civet)' }
 
     def start_session(self, session):
         """
@@ -228,6 +230,7 @@ class OAuth(object):
                 client_secret=self._secret_id,
                 authorization_response=request.build_absolute_uri(),
                 auth=(self._client_id, self._secret_id),
+                headers=self._header,
                 )
             request.session[self._token_key] = token
         except Exception as e:
@@ -242,7 +245,7 @@ class OAuth(object):
             self.fetch_token(request)
             if self._token_key in request.session:
                 oauth_session = self.start_session(request.session)
-                response = oauth_session.get(self._user_url)
+                response = oauth_session.get(self._user_url, headers=self._header)
                 response.raise_for_status()
                 request.session[self._user_key] = self.get_json_value(response, self._callback_user_key)
                 self.update_user(request.session)
@@ -259,14 +262,24 @@ class OAuth(object):
 
         return self.do_redirect(request)
 
+    def _safe_redirect_url(self, request, next_url, fallback='ci:main'):
+        """
+        Return next_url only if it is safe to redirect to (same host/scheme).
+        Falls back to fallback if next_url is missing or points off-site.
+        """
+        if next_url and url_has_allowed_host_and_scheme(
+                next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure()):
+            return next_url
+        return fallback
+
     def do_redirect(self, request):
         next_url = request.GET.get('next')
         if not next_url:
             next_url = request.session.get('source_url')
-            if not next_url:
-                next_url = "ci:main"
 
-        return redirect(next_url)
+        return redirect(self._safe_redirect_url(request, next_url))
 
     def sign_in(self, request):
         """

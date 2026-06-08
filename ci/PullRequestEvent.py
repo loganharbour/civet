@@ -1,5 +1,5 @@
 
-# Copyright 2016 Battelle Energy Alliance, LLC
+# Copyright 2016-2025 Battelle Energy Alliance, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -286,7 +286,7 @@ class PullRequestEvent(object):
                     comment = comment.format(ev.head.sha, job.recipe.name, abs_job_url)
                     git_api.pr_comment(ev.comments_url, comment)
 
-            git_api.update_pr_status(
+            git_api.update_status(
                 ev.base,
                 ev.head,
                 git_status,
@@ -295,7 +295,6 @@ class PullRequestEvent(object):
                 job.unique_name(),
                 git_api.STATUS_JOB_STARTED,
                 )
-
 
     def save(self):
         """
