@@ -26,7 +26,7 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install -r requirements.txt
+          pip install --no-deps ".[dev]"
       - name: Check pyflakes
         shell: bash
         run: |
@@ -55,7 +55,7 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install -r requirements.txt
+          pip install ".[dev,test]"
       - name: Migrate
         shell: bash
         run: |
@@ -139,7 +139,7 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install -r requirements.txt
+          pip install ".[dev,test]"
       - name: Migrate
         shell: bash
         run: |
