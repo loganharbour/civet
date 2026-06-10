@@ -222,7 +222,8 @@ def webhook(request, build_key):
 
     user = models.GitUser.objects.filter(build_key=build_key).first()
     if not user:
-        logger.warning("No user with build key %s" % build_key)
+        name = f"{data.get('organization')}/{data.get('repository')}"
+        logger.warning("No user with build key %s for repo %s" % (build_key, name))
         return HttpResponseBadRequest("Error")
 
     if user.recipes.count() == 0:
